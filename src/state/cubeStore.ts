@@ -5,10 +5,13 @@ import {
   createSolvedCube,
   invertMove,
   makeMove,
+  parseMove,
+  serializeCube,
   type CubeState,
   type Face,
   type Move,
 } from "../lib/cubeEngine";
+import { cubeFromScramble } from "../lib/scramble";
 
 export type TurnMode = "normal" | "prime" | "double";
 
@@ -23,15 +26,21 @@ interface CubeStore {
   activeMove: ActiveMove | null;
   moveQueue: Move[];
   history: Move[];
+  redoStack: Move[];
   turnMode: TurnMode;
   turnDuration: number;
   enqueueMove: (move: Move) => void;
+  enqueuePracticeMove: (move: Move) => void;
   playFace: (face: Face) => void;
   playMoves: (moves: Move[]) => void;
   tick: (deltaSeconds: number) => void;
   resetCube: () => void;
+  setCubeFromScramble: (scramble: string[]) => void;
   scrambleCube: () => void;
   undoLast: () => void;
+  redoLast: () => void;
+  clearRedo: () => void;
+  isSolved: () => boolean;
   setTurnMode: (mode: TurnMode) => void;
   setTurnDuration: (duration: number) => void;
 }
@@ -41,6 +50,7 @@ export const useCubeStore = create<CubeStore>((set, get) => ({
   activeMove: null,
   moveQueue: [],
   history: [],
+  redoStack: [],
   turnMode: "normal",
   turnDuration: 0.24,
 
@@ -60,8 +70,13 @@ export const useCubeStore = create<CubeStore>((set, get) => ({
     });
   },
 
+  enqueuePracticeMove: (move) => {
+    set({ redoStack: [] });
+    get().enqueueMove(move);
+  },
+
   playFace: (face) => {
-    get().enqueueMove(makeMove(face, get().turnMode));
+    get().enqueuePracticeMove(makeMove(face, get().turnMode));
   },
 
   playMoves: (moves) => {
@@ -150,6 +165,17 @@ export const useCubeStore = create<CubeStore>((set, get) => ({
       activeMove: null,
       moveQueue: [],
       history: [],
+      redoStack: [],
+    });
+  },
+
+  setCubeFromScramble: (scramble) => {
+    set({
+      cube: cubeFromScramble(scramble),
+      activeMove: null,
+      moveQueue: [],
+      history: [],
+      redoStack: [],
     });
   },
 
@@ -166,8 +192,30 @@ export const useCubeStore = create<CubeStore>((set, get) => ({
 
     set((state) => ({
       history: state.history.slice(0, -1),
+      redoStack: [lastMove, ...state.redoStack].slice(0, 24),
     }));
     get().enqueueMove(invertMove(lastMove));
+  },
+
+  redoLast: () => {
+    const nextMove = get().redoStack[0];
+
+    if (!nextMove) {
+      return;
+    }
+
+    set((state) => ({
+      redoStack: state.redoStack.slice(1),
+    }));
+    get().enqueueMove(nextMove);
+  },
+
+  clearRedo: () => {
+    set({ redoStack: [] });
+  },
+
+  isSolved: () => {
+    return serializeCube(get().cube) === serializeCube(createSolvedCube());
   },
 
   setTurnMode: (mode) => {

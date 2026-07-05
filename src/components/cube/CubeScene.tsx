@@ -12,6 +12,8 @@ import {
   isCubieInMove,
   rotateVectorByAngle,
   type Cubie as CubieType,
+  type CubeState,
+  type Move,
   type Sticker,
   type Vec3,
 } from "../../lib/cubeEngine";
@@ -23,33 +25,62 @@ const STICKER_SIZE = 0.68;
 const STICKER_DEPTH = 0.032;
 const STICKER_OFFSET = CUBIE_SIZE / 2 + STICKER_DEPTH / 2 + 0.004;
 
-export default function CubeScene() {
+interface SceneActiveMove {
+  move: Move;
+  startCube: CubeState;
+  progress: number;
+}
+
+interface CubeSceneProps {
+  theme?: "dark" | "light";
+  className?: string;
+  cube?: CubeState;
+  activeMove?: SceneActiveMove | null;
+  onFrame?: (deltaSeconds: number) => void;
+  interactive?: boolean;
+  compact?: boolean;
+}
+
+export default function CubeScene({
+  theme = "dark",
+  className = "",
+  cube,
+  activeMove,
+  onFrame,
+  interactive = true,
+  compact = false,
+}: CubeSceneProps) {
+  const background = theme === "dark" ? "#070b12" : "#eef2f7";
+  const cameraPosition: [number, number, number] = compact ? [4.8, 3.7, 5.2] : [5.6, 4.4, 6.2];
+  const cameraFov = compact ? 42 : 38;
+
   return (
-    <div className="cube-stage" aria-label="Interactive 3D Rubik's Cube">
+    <div className={`cube-stage ${compact ? "cube-stage-compact" : ""} ${className}`} aria-label="Interactive 3D Rubik's Cube">
       <Canvas
         dpr={[1, 2]}
         gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
-        camera={{ position: [5.6, 4.4, 6.2], fov: 38, near: 0.1, far: 100 }}
+        camera={{ position: cameraPosition, fov: cameraFov, near: 0.1, far: 100 }}
       >
-        <color attach="background" args={["#eef2f7"]} />
-        <fog attach="fog" args={["#eef2f7", 10, 22]} />
+        <color attach="background" args={[background]} />
+        <fog attach="fog" args={[background, 10, 22]} />
         <hemisphereLight args={["#ffffff", "#a8b3c7", 2.1]} />
         <directionalLight
           position={[4, 8, 5]}
           intensity={2.6}
         />
         <directionalLight position={[-5, 2, -3]} intensity={0.8} color="#8ec5ff" />
-        <CubeAnimator />
-        <CubeModel />
+        <CubeAnimator onFrame={onFrame} tickPlayerCube={cube === undefined} />
+        <CubeModel cube={cube} activeMove={activeMove} />
         <Environment preset="city" />
         <AdaptiveDpr pixelated />
         <OrbitControls
           makeDefault
+          enabled={interactive}
           enableDamping
           dampingFactor={0.08}
           rotateSpeed={0.7}
-          minDistance={4.8}
-          maxDistance={10}
+          minDistance={compact ? 4.2 : 4.8}
+          maxDistance={compact ? 8 : 10}
           target={[0, 0, 0]}
         />
       </Canvas>
@@ -57,31 +88,51 @@ export default function CubeScene() {
   );
 }
 
-function CubeAnimator() {
+function CubeAnimator({
+  onFrame,
+  tickPlayerCube,
+}: {
+  onFrame?: (deltaSeconds: number) => void;
+  tickPlayerCube: boolean;
+}) {
   const tick = useCubeStore((state) => state.tick);
 
   useFrame((_, delta) => {
-    tick(Math.min(delta, 0.05));
+    const clampedDelta = Math.min(delta, 0.05);
+
+    if (tickPlayerCube) {
+      tick(clampedDelta);
+    }
+
+    onFrame?.(clampedDelta);
   });
 
   return null;
 }
 
-function CubeModel() {
-  const cube = useCubeStore((state) => state.cube);
-  const activeMove = useCubeStore((state) => state.activeMove);
-  const renderCube = activeMove?.startCube ?? cube;
-  const progress = easeInOutCubic(activeMove?.progress ?? 0);
-  const angle = activeMove ? activeMove.move.quarterTurns * (Math.PI / 2) * progress : 0;
+function CubeModel({
+  cube,
+  activeMove,
+}: {
+  cube?: CubeState;
+  activeMove?: SceneActiveMove | null;
+}) {
+  const storeCube = useCubeStore((state) => state.cube);
+  const storeActiveMove = useCubeStore((state) => state.activeMove);
+  const currentCube = cube ?? storeCube;
+  const currentActiveMove = activeMove !== undefined ? activeMove : storeActiveMove;
+  const renderCube = currentActiveMove?.startCube ?? currentCube;
+  const progress = easeInOutCubic(currentActiveMove?.progress ?? 0);
+  const angle = currentActiveMove ? currentActiveMove.move.quarterTurns * (Math.PI / 2) * progress : 0;
 
   return (
     <group position={[0, 0.1, 0]} rotation={[-0.08, -0.18, 0.02]}>
       {renderCube.map((cubie) => {
-        const moving = activeMove ? isCubieInMove(cubie, activeMove.move) : false;
+        const moving = currentActiveMove ? isCubieInMove(cubie, currentActiveMove.move) : false;
         const visualPosition = moving
-          ? rotateVectorByAngle(cubie.position, activeMove!.move.axis, angle)
+          ? rotateVectorByAngle(cubie.position, currentActiveMove!.move.axis, angle)
           : cubie.position;
-        const axisVector = activeMove ? axisToVector(activeMove.move.axis) : [0, 1, 0];
+        const axisVector = currentActiveMove ? axisToVector(currentActiveMove.move.axis) : [0, 1, 0];
         const quaternion = new THREE.Quaternion();
 
         if (moving) {

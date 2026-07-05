@@ -5,7 +5,11 @@ import { PNG } from "pngjs";
 test.describe("3D cube scene", () => {
   test("renders a nonblank interactive cube without layout overflow", async ({ page }, testInfo) => {
     await page.goto("/");
+    await page.getByRole("button", { name: "Play" }).click();
+    await page.getByRole("button", { name: /Practice/ }).click();
+    await expect(page.getByText("Generating Scramble...")).toBeVisible();
     await page.waitForSelector("canvas");
+    await expect(page.getByText("READY")).toBeVisible();
     await page.waitForTimeout(700);
 
     const canvas = page.locator("canvas").first();
@@ -23,7 +27,7 @@ test.describe("3D cube scene", () => {
     const overflow = await getLayoutOverflow(page);
     expect(overflow.horizontal).toBeLessThanOrEqual(1);
 
-    await page.getByRole("button", { name: "R", exact: true }).click();
+    await page.keyboard.press("R");
     await page.waitForTimeout(420);
     const after = await captureCanvas(page, `test-results/${testInfo.project.name}-cube-after.png`);
 
