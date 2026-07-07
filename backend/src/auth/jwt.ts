@@ -42,7 +42,7 @@ export function verifyAccessToken(token: string, secret: string): AccessTokenPay
   return payload as AccessTokenPayload;
 }
 
-function signJwt(payload: Record<string, unknown>, secret: string): string {
+function signJwt(payload: object, secret: string): string {
   const header = { alg: "HS256", typ: "JWT" };
   const encodedHeader = encodeJson(header);
   const encodedPayload = encodeJson(payload);
@@ -74,7 +74,7 @@ function verifyJwt(token: string, secret: string): Record<string, unknown> {
   return payload;
 }
 
-function encodeJson(value: Record<string, unknown>): string {
+function encodeJson(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }
 

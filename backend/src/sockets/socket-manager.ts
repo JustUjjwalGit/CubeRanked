@@ -55,6 +55,48 @@ interface MatchPlayer {
   playAgain: boolean;
 }
 
+interface RoomPlayer {
+  clientId: string;
+  socketId: string;
+  username: string;
+  avatar: string | null;
+  ready: boolean;
+  connected: boolean;
+  pingMs: number | null;
+}
+
+interface RoomSettings {
+  puzzle: "3x3";
+  gameType: "race";
+  inspectionEnabled: boolean;
+  bestOf: 1 | 3 | 5;
+  scrambleVisibility: "hidden" | "visible";
+  botFill: boolean;
+}
+
+interface ChatMessage {
+  id: string;
+  senderName: string;
+  text: string;
+  timestamp: number;
+}
+
+interface RoomState {
+  code: string;
+  roomId: string;
+  host: RoomPlayer;
+  guest: RoomPlayer | null;
+  spectator: RoomPlayer | null;
+  settings: RoomSettings;
+  status: "lobby" | "match" | "finished";
+  currentMatchId: string | null;
+  scores: Record<string, number>;
+  chat: ChatMessage[];
+  winnerClientId: string | null;
+  disconnectTimer: NodeJS.Timeout | null;
+  disconnectDeadlines: Map<string, number>;
+}
+
 interface MatchState {
   id: string;
   roomId: string;
@@ -66,6 +108,7 @@ interface MatchState {
   startedAt: number | null;
   finishedAt: number | null;
   players: MatchPlayer[];
+  roomCode?: string;
 }
 
 const AXIS_BY_FACE: Record<string, "x" | "y" | "z"> = {
@@ -134,7 +177,8 @@ export function createSocketManager(app: FastifyInstance) {
     }
   }
 
-  function createMatch(clientIds: string[]) {
+  function createMatch(clientIds: string[], roomCode?: string) {
+    const room = roomCode ? rooms.get(roomCode) : null;
     const now = Date.now();
     const matchId = randomUUID();
     const match: MatchState = {
@@ -174,6 +218,7 @@ export function createSocketManager(app: FastifyInstance) {
           playAgain: false,
         };
       }),
+      roomCode,
     };
 
     matches.set(matchId, match);
@@ -184,6 +229,31 @@ export function createSocketManager(app: FastifyInstance) {
 
       void socket?.join(match.roomId);
       socket?.emit("match:found", buildMatchPayload(match, player.clientId, opponent));
+    }
+
+    if (room && room.spectator) {
+      const specSocket = namespace.sockets.get(room.spectator.socketId);
+      if (specSocket) {
+        void specSocket.join(match.roomId);
+        const host = match.players.find(p => p.clientId === room.host.clientId)!;
+        const guest = match.players.find(p => p.clientId === room.guest!.clientId)!;
+        specSocket.emit("match:found", {
+          matchId: match.id,
+          roomId: match.roomId,
+          scrambleId: match.scrambleId,
+          scramble: match.scramble,
+          status: match.status,
+          serverNow: Date.now(),
+          startAt: match.startedAt,
+          countdownAt: match.countdownAt,
+          you: publicPlayer(host),
+          opponent: publicPlayer(guest),
+          isPrivate: true,
+          isSpectator: true,
+          inspectionEnabled: room.settings.inspectionEnabled,
+          scrambleVisibility: room.settings.scrambleVisibility,
+        });
+      }
     }
   }
 
@@ -207,6 +277,7 @@ export function createSocketManager(app: FastifyInstance) {
   }
 
   function buildMatchPayload(match: MatchState, clientId: string, opponent: MatchPlayer | null) {
+    const room = match.roomCode ? rooms.get(match.roomCode) : null;
     return {
       matchId: match.id,
       roomId: match.roomId,
@@ -218,6 +289,9 @@ export function createSocketManager(app: FastifyInstance) {
       countdownAt: match.countdownAt,
       you: publicPlayer(match.players.find((player) => player.clientId === clientId)!),
       opponent: opponent ? publicPlayer(opponent) : null,
+      isPrivate: !!match.roomCode,
+      inspectionEnabled: room ? room.settings.inspectionEnabled : true,
+      scrambleVisibility: room ? room.settings.scrambleVisibility : "hidden",
     };
   }
 
@@ -315,6 +389,34 @@ export function createSocketManager(app: FastifyInstance) {
       players: match.players.map(publicPlayer),
       serverNow: Date.now(),
     });
+
+    if (match.roomCode) {
+      const room = rooms.get(match.roomCode);
+      if (room) {
+        if (winner) {
+          room.scores[winner.clientId] = (room.scores[winner.clientId] || 0) + 1;
+          const targetWins = Math.ceil(room.settings.bestOf / 2);
+          if (room.scores[winner.clientId] >= targetWins) {
+            room.winnerClientId = winner.clientId;
+            room.status = "finished";
+            addRoomSystemMessage(room, `Match series won by ${winner.username}!`);
+          } else {
+            room.host.ready = false;
+            if (room.guest) room.guest.ready = false;
+            room.status = "lobby";
+            room.currentMatchId = null;
+            addRoomSystemMessage(room, `Round won by ${winner.username}! Score: ${room.host.username} (${room.scores[room.host.clientId] || 0}) - ${room.guest?.username} (${room.scores[room.guest?.clientId || ""] || 0})`);
+          }
+        } else {
+          room.host.ready = false;
+          if (room.guest) room.guest.ready = false;
+          room.status = "lobby";
+          room.currentMatchId = null;
+          addRoomSystemMessage(room, `Draw! Score remains: ${room.host.username} (${room.scores[room.host.clientId] || 0}) - ${room.guest?.username} (${room.scores[room.guest?.clientId || ""] || 0})`);
+        }
+        broadcastRoomState(room);
+      }
+    }
   }
 
   function forfeitPlayer(match: MatchState, player: MatchPlayer) {
@@ -337,6 +439,122 @@ export function createSocketManager(app: FastifyInstance) {
     }
 
     finishMatchIfReady(match);
+  }
+
+  const rooms = new Map<string, RoomState>();
+
+  function findRoomByClientId(clientId: string): RoomState | null {
+    for (const room of rooms.values()) {
+      if (
+        room.host.clientId === clientId ||
+        room.guest?.clientId === clientId ||
+        room.spectator?.clientId === clientId
+      ) {
+        return room;
+      }
+    }
+    return null;
+  }
+
+  function broadcastRoomState(room: RoomState) {
+    namespace.to(room.roomId).emit("room:state", {
+      code: room.code,
+      host: room.host,
+      guest: room.guest,
+      spectator: room.spectator,
+      settings: room.settings,
+      status: room.status,
+      currentMatchId: room.currentMatchId,
+      scores: room.scores,
+      chat: room.chat,
+      winnerClientId: room.winnerClientId,
+    });
+  }
+
+  function addRoomSystemMessage(room: RoomState, text: string) {
+    const message: ChatMessage = {
+      id: randomUUID(),
+      senderName: "System",
+      text,
+      timestamp: Date.now(),
+    };
+    room.chat.push(message);
+    if (room.chat.length > 50) {
+      room.chat.shift();
+    }
+    broadcastRoomState(room);
+  }
+
+  function hasAnyRoomDisconnects(room: RoomState): boolean {
+    return room.disconnectDeadlines.size > 0;
+  }
+
+  function generateRoomCode(): string {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let code = "";
+    for (let i = 0; i < 6; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+  }
+
+  function createUniqueRoomCode(): string {
+    let code = generateRoomCode();
+    while (rooms.has(code)) {
+      code = generateRoomCode();
+    }
+    return code;
+  }
+
+  function handleRoomLeave(room: RoomState, clientId: string, socket: any) {
+    void socket.leave(room.roomId);
+    
+    if (room.host.clientId === clientId) {
+      addRoomSystemMessage(room, "Host left. Room closed.");
+      namespace.to(room.roomId).emit("room:error", { message: "Host closed the room." });
+      namespace.in(room.roomId).socketsLeave(room.roomId);
+      rooms.delete(room.code);
+    } else if (room.guest?.clientId === clientId) {
+      room.guest = null;
+      room.scores = {};
+      room.status = "lobby";
+      room.currentMatchId = null;
+      room.winnerClientId = null;
+      room.disconnectDeadlines.delete(clientId);
+      addRoomSystemMessage(room, "Guest left the lobby");
+      broadcastRoomState(room);
+    } else if (room.spectator?.clientId === clientId) {
+      room.spectator = null;
+      room.disconnectDeadlines.delete(clientId);
+      addRoomSystemMessage(room, "Spectator left");
+      broadcastRoomState(room);
+    }
+  }
+
+  function handleRoomDisconnectTimeout(room: RoomState, clientId: string) {
+    const deadline = room.disconnectDeadlines.get(clientId);
+    if (deadline && Date.now() >= deadline) {
+      if (room.host.clientId === clientId) {
+        addRoomSystemMessage(room, "Lobby closed: Host disconnected");
+        namespace.to(room.roomId).emit("room:error", { message: "Host disconnected. Room closed." });
+        namespace.in(room.roomId).socketsLeave(room.roomId);
+        rooms.delete(room.code);
+      } else if (room.guest?.clientId === clientId) {
+        addRoomSystemMessage(room, `${room.guest.username} disconnected. Slot freed.`);
+        room.guest = null;
+        room.scores = {};
+        room.status = "lobby";
+        room.currentMatchId = null;
+        room.winnerClientId = null;
+        room.disconnectDeadlines.delete(clientId);
+        broadcastRoomState(room);
+      } else if (room.spectator?.clientId === clientId) {
+        addRoomSystemMessage(room, "Spectator disconnected");
+        room.spectator = null;
+        room.disconnectDeadlines.delete(clientId);
+        broadcastRoomState(room);
+      }
+    }
   }
 
   namespace.on("connection", (socket) => {
@@ -367,6 +585,33 @@ export function createSocketManager(app: FastifyInstance) {
       roomId: SHARED_TEST_ROOM_ID,
       timestamp: Date.now(),
     });
+
+    const existingRoom = findRoomByClientId(session.clientId);
+    if (existingRoom) {
+      let player: RoomPlayer | null = null;
+      if (existingRoom.host.clientId === session.clientId) {
+        player = existingRoom.host;
+      } else if (existingRoom.guest?.clientId === session.clientId) {
+        player = existingRoom.guest;
+      } else if (existingRoom.spectator?.clientId === session.clientId) {
+        player = existingRoom.spectator;
+      }
+
+      if (player) {
+        player.socketId = socket.id;
+        player.connected = true;
+        existingRoom.disconnectDeadlines.delete(session.clientId);
+        
+        if (existingRoom.disconnectTimer && !hasAnyRoomDisconnects(existingRoom)) {
+          clearTimeout(existingRoom.disconnectTimer);
+          existingRoom.disconnectTimer = null;
+        }
+        
+        void socket.join(existingRoom.roomId);
+        broadcastRoomState(existingRoom);
+        addRoomSystemMessage(existingRoom, `${player.username} reconnected`);
+      }
+    }
 
     const existingMatch = session.matchId ? matches.get(session.matchId) : null;
     const existingPlayer = existingMatch?.players.find((player) => player.clientId === session.clientId);
@@ -507,8 +752,258 @@ export function createSocketManager(app: FastifyInstance) {
         player: publicPlayer(player),
         serverNow: Date.now(),
       });
+      
+      if (match.roomCode) {
+        const room = rooms.get(match.roomCode);
+        if (room) {
+          room.status = "lobby";
+          room.currentMatchId = null;
+          room.host.ready = false;
+          if (room.guest) room.guest.ready = false;
+          broadcastRoomState(room);
+          addRoomSystemMessage(room, `${player.username} left the match.`);
+        }
+      }
+    });
+    socket.on("room:create", () => {
+      const existing = findRoomByClientId(session.clientId);
+      if (existing) {
+        handleRoomLeave(existing, session.clientId, socket);
+      }
+
+      const code = createUniqueRoomCode();
+      const room: RoomState = {
+        code,
+        roomId: `room:${code}`,
+        host: {
+          clientId: session.clientId,
+          socketId: socket.id,
+          username: session.username,
+          avatar: null,
+          ready: false,
+          connected: true,
+          pingMs: null,
+        },
+        guest: null,
+        spectator: null,
+        settings: {
+          puzzle: "3x3",
+          gameType: "race",
+          inspectionEnabled: true,
+          bestOf: 1,
+          scrambleVisibility: "hidden",
+          botFill: false,
+        },
+        status: "lobby",
+        currentMatchId: null,
+        scores: {},
+        chat: [],
+        winnerClientId: null,
+        disconnectTimer: null,
+        disconnectDeadlines: new Map(),
+      };
+
+      rooms.set(code, room);
+      void socket.join(room.roomId);
+      broadcastRoomState(room);
+      addRoomSystemMessage(room, `${session.username} created a private room`);
     });
 
+    socket.on("room:join", (payload: { code: string }) => {
+      const code = payload.code?.trim().toUpperCase();
+      const room = rooms.get(code);
+
+      if (!room) {
+        socket.emit("room:error", { message: "Room not found" });
+        return;
+      }
+
+      if (room.guest && room.guest.clientId !== session.clientId) {
+        socket.emit("room:error", { message: "Room is full" });
+        return;
+      }
+
+      if (room.status === "match" && (!room.guest || room.guest.clientId !== session.clientId)) {
+        socket.emit("room:error", { message: "Room match is already in progress" });
+        return;
+      }
+
+      if (room.guest && room.guest.clientId === session.clientId) {
+        room.guest.socketId = socket.id;
+        room.guest.connected = true;
+        room.disconnectDeadlines.delete(session.clientId);
+        if (room.disconnectTimer && !hasAnyRoomDisconnects(room)) {
+          clearTimeout(room.disconnectTimer);
+          room.disconnectTimer = null;
+        }
+      } else {
+        room.guest = {
+          clientId: session.clientId,
+          socketId: socket.id,
+          username: session.username,
+          avatar: null,
+          ready: false,
+          connected: true,
+          pingMs: null,
+        };
+      }
+
+      void socket.join(room.roomId);
+      broadcastRoomState(room);
+      addRoomSystemMessage(room, `${session.username} joined the lobby`);
+    });
+
+    socket.on("room:spectate", (payload: { code: string }) => {
+      const code = payload.code?.trim().toUpperCase();
+      const room = rooms.get(code);
+
+      if (!room) {
+        socket.emit("room:error", { message: "Room not found" });
+        return;
+      }
+
+      if (room.spectator && room.spectator.clientId !== session.clientId) {
+        socket.emit("room:error", { message: "Spectator slot is full" });
+        return;
+      }
+
+      if (room.spectator && room.spectator.clientId === session.clientId) {
+        room.spectator.socketId = socket.id;
+        room.spectator.connected = true;
+        room.disconnectDeadlines.delete(session.clientId);
+        if (room.disconnectTimer && !hasAnyRoomDisconnects(room)) {
+          clearTimeout(room.disconnectTimer);
+          room.disconnectTimer = null;
+        }
+      } else {
+        room.spectator = {
+          clientId: session.clientId,
+          socketId: socket.id,
+          username: session.username,
+          avatar: null,
+          ready: false,
+          connected: true,
+          pingMs: null,
+        };
+      }
+
+      void socket.join(room.roomId);
+      broadcastRoomState(room);
+      addRoomSystemMessage(room, `${session.username} joined as a spectator`);
+    });
+
+    socket.on("room:ready", () => {
+      const room = findRoomByClientId(session.clientId);
+      if (!room || room.status === "match") return;
+
+      if (room.host.clientId === session.clientId) {
+        room.host.ready = !room.host.ready;
+      } else if (room.guest?.clientId === session.clientId) {
+        room.guest.ready = !room.guest.ready;
+      }
+
+      broadcastRoomState(room);
+    });
+
+    socket.on("room:settings", (settingsPayload: Partial<RoomSettings>) => {
+      const room = findRoomByClientId(session.clientId);
+      if (!room || room.host.clientId !== session.clientId || room.status === "match") return;
+
+      room.settings = {
+        ...room.settings,
+        ...settingsPayload,
+      };
+
+      broadcastRoomState(room);
+      addRoomSystemMessage(room, "Settings updated by host");
+    });
+
+    socket.on("room:chat", (payload: { text: string }) => {
+      const room = findRoomByClientId(session.clientId);
+      if (!room || !payload.text?.trim()) return;
+
+      const message: ChatMessage = {
+        id: randomUUID(),
+        senderName: session.username,
+        text: payload.text.slice(0, 140),
+        timestamp: Date.now(),
+      };
+
+      room.chat.push(message);
+      if (room.chat.length > 50) {
+        room.chat.shift();
+      }
+
+      broadcastRoomState(room);
+    });
+
+    socket.on("room:leave", () => {
+      const room = findRoomByClientId(session.clientId);
+      if (room) {
+        handleRoomLeave(room, session.clientId, socket);
+      }
+    });
+
+    socket.on("room:start", () => {
+      const room = findRoomByClientId(session.clientId);
+      if (!room || room.host.clientId !== session.clientId || room.status === "match") return;
+
+      if (!room.guest) {
+        socket.emit("room:error", { message: "Cannot start match without a guest player" });
+        return;
+      }
+
+      if (!room.host.ready || !room.guest.ready) {
+        socket.emit("room:error", { message: "Both players must be ready to start" });
+        return;
+      }
+
+      room.status = "match";
+      broadcastRoomState(room);
+      createMatch([room.host.clientId, room.guest.clientId], room.code);
+    });
+
+    socket.on("room:reset-series", () => {
+      const room = findRoomByClientId(session.clientId);
+      if (!room || room.host.clientId !== session.clientId || room.status !== "finished") return;
+
+      room.scores = {};
+      room.status = "lobby";
+      room.winnerClientId = null;
+      room.host.ready = false;
+      if (room.guest) room.guest.ready = false;
+      room.currentMatchId = null;
+
+      broadcastRoomState(room);
+      addRoomSystemMessage(room, "Series score reset by host");
+    });
+
+    socket.on("session:authenticate", (payload: { username: string; avatar: string | null }) => {
+      session.username = payload.username;
+      
+      const room = findRoomByClientId(session.clientId);
+      if (room) {
+        if (room.host.clientId === session.clientId) {
+          room.host.username = payload.username;
+          room.host.avatar = payload.avatar;
+        } else if (room.guest?.clientId === session.clientId) {
+          room.guest.username = payload.username;
+          room.guest.avatar = payload.avatar;
+        } else if (room.spectator?.clientId === session.clientId) {
+          room.spectator.username = payload.username;
+          room.spectator.avatar = payload.avatar;
+        }
+        broadcastRoomState(room);
+      }
+      
+      const match = session.matchId ? matches.get(session.matchId) : null;
+      const player = match?.players.find((item) => item.clientId === session.clientId);
+      if (player) {
+        player.username = payload.username;
+      }
+      
+      broadcastPresence();
+    });
     socket.on("cube:move", (payload: ClientMovePayload) => {
       socket.to(SHARED_TEST_ROOM_ID).emit("cube:move", {
         ...payload,
@@ -522,6 +1017,32 @@ export function createSocketManager(app: FastifyInstance) {
       app.log.info({ socketId: socket.id, reason }, "Socket disconnected");
       socketToClient.delete(socket.id);
       removeFromQueue(session.clientId);
+
+      const room = findRoomByClientId(session.clientId);
+      if (room) {
+        let player: RoomPlayer | null = null;
+        if (room.host.clientId === session.clientId) {
+          player = room.host;
+        } else if (room.guest?.clientId === session.clientId) {
+          player = room.guest;
+        } else if (room.spectator?.clientId === session.clientId) {
+          player = room.spectator;
+        }
+
+        if (player) {
+          player.connected = false;
+          room.disconnectDeadlines.set(session.clientId, Date.now() + 60_000);
+          broadcastRoomState(room);
+          addRoomSystemMessage(room, `${player.username} disconnected`);
+
+          if (room.disconnectTimer) {
+            clearTimeout(room.disconnectTimer);
+          }
+          room.disconnectTimer = setTimeout(() => {
+            handleRoomDisconnectTimeout(room, session.clientId);
+          }, 60_000);
+        }
+      }
 
       const match = session.matchId ? matches.get(session.matchId) : null;
       const player = match?.players.find((item) => item.clientId === session.clientId);

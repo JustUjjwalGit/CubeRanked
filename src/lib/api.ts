@@ -1,5 +1,14 @@
 export type HealthState = "connecting" | "connected" | "offline";
 
+export interface ApiFailure {
+  ok: false;
+  error: {
+    code: string;
+    message: string;
+    details?: unknown;
+  };
+}
+
 export interface ApiHealthResponse {
   ok: boolean;
   data: {

@@ -8,9 +8,10 @@ export type GameStage =
   | "INSPECTION"
   | "PLAYING"
   | "SOLVED"
-  | "RESULT";
+  | "RESULT"
+  | "PRIVATE_LOBBY";
 
-export type GameMode = "practice" | "bot-race" | "ranked";
+export type GameMode = "practice" | "bot-race" | "ranked" | "private";
 
 export type GameOverlay =
   | "NONE"
@@ -31,6 +32,7 @@ export type GameEvent =
   | { type: "SELECT_PRACTICE" }
   | { type: "SELECT_BOT_RACE" }
   | { type: "SELECT_RANKED" }
+  | { type: "SELECT_PRIVATE" }
   | { type: "QUEUE_CANCELLED" }
   | { type: "MATCH_FOUND" }
   | { type: "LOADING_COMPLETE" }
@@ -94,22 +96,37 @@ export function gameStateReducer(state: GameState, event: GameEvent): GameState 
         mode: "ranked",
       };
 
+    case "SELECT_PRIVATE":
+      return {
+        ...state,
+        stage: "PRIVATE_LOBBY",
+        overlay: "NONE",
+        mode: "private",
+      };
+
     case "QUEUE_CANCELLED":
       if (state.stage !== "MATCHMAKING") return state;
       return { ...state, stage: "MODE_SELECT", overlay: "NONE", mode: null };
 
     case "MATCH_FOUND":
-      if (state.stage !== "MATCHMAKING" && state.stage !== "HOME" && state.stage !== "MODE_SELECT") return state;
+      if (
+        state.stage !== "MATCHMAKING" &&
+        state.stage !== "HOME" &&
+        state.stage !== "MODE_SELECT" &&
+        state.stage !== "PRIVATE_LOBBY"
+      ) {
+        return state;
+      }
       return {
         stage: "MATCH_LOADING",
         overlay: "NONE",
         loadingId: state.loadingId + 1,
-        mode: "ranked",
+        mode: state.mode || "ranked",
       };
 
     case "LOADING_COMPLETE":
       if (state.stage !== "MATCH_LOADING") return state;
-      return { ...state, stage: state.mode === "bot-race" ? "COUNTDOWN" : "READY", overlay: "NONE" };
+      return { ...state, stage: "COUNTDOWN", overlay: "NONE" };
 
     case "START_COUNTDOWN":
       if (state.stage !== "MATCH_LOADING" && state.stage !== "READY") return state;
@@ -117,7 +134,7 @@ export function gameStateReducer(state: GameState, event: GameEvent): GameState 
 
     case "COUNTDOWN_COMPLETE":
       if (state.stage !== "COUNTDOWN") return state;
-      return { ...state, stage: "PLAYING", overlay: "NONE" };
+      return { ...state, stage: "READY", overlay: "NONE" };
 
     case "START_INSPECTION":
       if (state.stage !== "READY") return state;
@@ -138,7 +155,7 @@ export function gameStateReducer(state: GameState, event: GameEvent): GameState 
     case "PRACTICE_AGAIN":
     case "RESTART_SOLVE":
       if (!isPracticeStage(state.stage)) return state;
-      return { ...state, stage: state.mode === "bot-race" ? "COUNTDOWN" : "READY", overlay: "NONE" };
+      return { ...state, stage: "COUNTDOWN", overlay: "NONE" };
 
     case "NEW_SCRAMBLE":
       if (!isPracticeStage(state.stage)) return state;

@@ -21,6 +21,10 @@ services:
       APP_HOST: 0.0.0.0
       API_PREFIX: /api/v1
       FRONTEND_ORIGIN: http://127.0.0.1:5173
+      AUTH_JWT_SECRET: dev-only-cuberanked-secret-change-me
+      AUTH_ACCESS_TOKEN_TTL_SECONDS: 900
+      AUTH_REFRESH_TOKEN_TTL_DAYS: 30
+      AUTH_STORE_PATH: data/auth-store.json
       LOG_LEVEL: info
     ports:
       - "4000:4000"

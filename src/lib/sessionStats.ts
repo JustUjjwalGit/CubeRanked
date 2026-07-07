@@ -17,6 +17,7 @@ export interface SessionSettings {
   theme: "dark" | "light";
   hudVisible: boolean;
   showKeyboardCheatSheet: boolean;
+  keybindings: Record<string, string>;
 }
 
 export interface SessionStats {
@@ -35,6 +36,14 @@ export const DEFAULT_SETTINGS: SessionSettings = {
   theme: "dark",
   hudVisible: true,
   showKeyboardCheatSheet: true,
+  keybindings: {
+    U: "U",
+    R: "R",
+    F: "F",
+    D: "D",
+    L: "L",
+    B: "B",
+  },
 };
 
 export function calculateStats(history: SolveRecord[]): SessionStats {

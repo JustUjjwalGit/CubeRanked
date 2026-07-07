@@ -16,6 +16,8 @@ import type {
   RemoteCubeMovePayload,
   ServerReadyPayload,
   SocketDebugSnapshot,
+  RoomSettings,
+  RoomState,
 } from "./socketTypes";
 
 type SnapshotListener = (snapshot: SocketDebugSnapshot) => void;
@@ -67,6 +69,8 @@ interface ServerToClientEvents {
   "match:opponent-reconnected": (payload: MatchReconnectPayload) => void;
   "match:play-again-state": (payload: MatchPlayAgainStatePayload) => void;
   "match:play-again-cancelled": (payload: MatchPlayAgainCancelledPayload) => void;
+  "room:state": (payload: RoomState) => void;
+  "room:error": (payload: { message: string }) => void;
 }
 
 interface ClientToServerEvents {
@@ -82,6 +86,16 @@ interface ClientToServerEvents {
   "match:finish": (payload: { matchId: string; moveCount: number }) => void;
   "match:play-again": (payload: { matchId: string }) => void;
   "match:return-home": (payload: { matchId: string }) => void;
+  "room:create": () => void;
+  "room:join": (payload: { code: string }) => void;
+  "room:spectate": (payload: { code: string }) => void;
+  "room:ready": () => void;
+  "room:settings": (payload: Partial<RoomSettings>) => void;
+  "room:chat": (payload: { text: string }) => void;
+  "room:leave": () => void;
+  "room:start": () => void;
+  "room:reset-series": () => void;
+  "session:authenticate": (payload: { username: string; avatar: string | null }) => void;
 }
 
 const socketBaseUrl = import.meta.env.VITE_SOCKET_URL ?? "http://127.0.0.1:4000/v1";
@@ -125,6 +139,8 @@ class CubeRankedSocketManager {
     opponentSocketId: null,
     queueStatus: "idle",
     synchronizationDelayMs: null,
+    roomState: null,
+    roomError: null,
   };
 
   connect() {
@@ -143,7 +159,7 @@ class CubeRankedSocketManager {
       reconnectionAttempts: Infinity,
       reconnectionDelay: 500,
       reconnectionDelayMax: 4_000,
-    });
+    }) as unknown as Socket<ServerToClientEvents, ClientToServerEvents>;
 
     this.socket.on("connect", () => {
       this.hasConnectedOnce = true;
@@ -155,7 +171,11 @@ class CubeRankedSocketManager {
     });
 
     this.socket.io.on("reconnect_attempt", () => {
-      this.setSnapshot({ connectionState: "reconnecting" });
+      if (this.hasConnectedOnce) {
+        this.setSnapshot({ connectionState: "reconnecting" });
+      } else {
+        this.setSnapshot({ connectionState: "connecting" });
+      }
     });
 
     this.socket.io.on("reconnect", () => {
@@ -166,9 +186,13 @@ class CubeRankedSocketManager {
       this.ping();
     });
 
-    this.socket.on("disconnect", () => {
+    this.socket.on("disconnect", (reason) => {
       window.clearInterval(this.pingTimer);
-      this.setSnapshot({ connectionState: "disconnected", pingMs: null });
+      if (reason === "io client disconnect" || reason === "io server disconnect") {
+        this.setSnapshot({ connectionState: "disconnected", pingMs: null });
+      } else {
+        this.setSnapshot({ connectionState: "reconnecting", pingMs: null });
+      }
     });
 
     this.socket.on("connect_error", () => {
@@ -230,6 +254,21 @@ class CubeRankedSocketManager {
         opponentSocketId: opponent?.socketId ?? this.snapshot.opponentSocketId,
       });
       this.emitMatchEvent("state", payload);
+    });
+
+    this.socket.on("room:state", (payload) => {
+      this.incrementReceived();
+      this.setSnapshot({
+        roomState: payload,
+        roomError: null,
+      });
+    });
+
+    this.socket.on("room:error", (payload) => {
+      this.incrementReceived();
+      this.setSnapshot({
+        roomError: payload.message,
+      });
     });
 
     this.socket.on("match:countdown", (payload) => {
@@ -307,6 +346,71 @@ class CubeRankedSocketManager {
     this.socket.emit("queue:cancel");
     this.incrementSent();
     this.setSnapshot({ queueStatus: "idle" });
+  }
+
+  createRoom() {
+    if (!this.socket?.connected) return;
+    this.socket.emit("room:create");
+    this.incrementSent();
+  }
+
+  joinRoom(code: string) {
+    if (!this.socket?.connected) return;
+    this.socket.emit("room:join", { code });
+    this.incrementSent();
+  }
+
+  spectateRoom(code: string) {
+    if (!this.socket?.connected) return;
+    this.socket.emit("room:spectate", { code });
+    this.incrementSent();
+  }
+
+  toggleRoomReady() {
+    if (!this.socket?.connected) return;
+    this.socket.emit("room:ready");
+    this.incrementSent();
+  }
+
+  updateRoomSettings(settings: Partial<RoomSettings>) {
+    if (!this.socket?.connected) return;
+    this.socket.emit("room:settings", settings);
+    this.incrementSent();
+  }
+
+  sendRoomChat(text: string) {
+    if (!this.socket?.connected) return;
+    this.socket.emit("room:chat", { text });
+    this.incrementSent();
+  }
+
+  leaveRoom() {
+    if (!this.socket?.connected) return;
+    this.socket.emit("room:leave");
+    this.incrementSent();
+    this.setSnapshot({ roomState: null, roomError: null });
+  }
+
+  startRoomMatch() {
+    if (!this.socket?.connected) return;
+    this.socket.emit("room:start");
+    this.incrementSent();
+  }
+
+  resetRoomSeries() {
+    if (!this.socket?.connected) return;
+    this.socket.emit("room:reset-series");
+    this.incrementSent();
+  }
+
+  authenticateSession(username: string, avatar: string | null) {
+    if (!this.socket?.connected) return;
+    this.socket.emit("session:authenticate", { username, avatar });
+    this.incrementSent();
+  }
+
+  clearRoomError() {
+    this.setSnapshot({ roomError: null });
   }
 
   sendReady(matchId: string) {

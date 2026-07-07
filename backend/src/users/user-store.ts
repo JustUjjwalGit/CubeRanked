@@ -9,6 +9,7 @@ export interface StoredSettings {
   theme: "dark" | "light";
   hudVisible: boolean;
   showKeyboardCheatSheet: boolean;
+  keybindings: Record<string, string>;
 }
 
 export interface StoredStatistics {
@@ -59,6 +60,14 @@ const DEFAULT_SETTINGS: StoredSettings = {
   theme: "dark",
   hudVisible: true,
   showKeyboardCheatSheet: true,
+  keybindings: {
+    U: "U",
+    R: "R",
+    F: "F",
+    D: "D",
+    L: "L",
+    B: "B",
+  },
 };
 
 const DEFAULT_STATISTICS: StoredStatistics = {

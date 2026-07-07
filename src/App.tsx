@@ -9,20 +9,27 @@ import {
   Keyboard,
   Loader2,
   Lock,
+  LogIn,
+  LogOut,
   Moon,
   Play,
   RefreshCcw,
   RotateCcw,
+  Send,
   Settings,
+  Share2,
   StepBack,
   StepForward,
   Sun,
   Trophy,
+  Tv,
   User,
+  UserPlus,
+  Users,
   Wifi,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useReducer, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import CubeScene from "./components/cube/CubeScene";
 import { makeMove, MOVE_FACES, parseMove, type Face } from "./lib/cubeEngine";
 import { useBackendHealth } from "./hooks/useBackendHealth";
@@ -41,6 +48,7 @@ import {
 import { generateWcaScramble, scrambleToString, type Penalty } from "./lib/scramble";
 import {
   createSolveRecord,
+  calculateStats,
   DEFAULT_SETTINGS,
   formatSolveTime,
   formatTime,
@@ -53,9 +61,13 @@ import {
   isPausableStage,
   isPracticeStage,
   type GameStage,
+  type GameMode,
 } from "./state/gameStateMachine";
 import { useCubeStore, type TurnMode } from "./state/cubeStore";
 import { socketManager } from "./network/socketManager";
+import { useAuth } from "./auth/AuthContext";
+import type { UserProfile, UserStatistics } from "./lib/authApi";
+import { audioManager } from "./lib/audioManager";
 import type {
   MatchFoundPayload,
   MatchPlayerSnapshot,
@@ -63,6 +75,9 @@ import type {
   QueueUpdatePayload,
   SocketConnectionState,
   SocketDebugSnapshot,
+  RoomState,
+  RoomSettings,
+  ChatMessage,
 } from "./network/socketTypes";
 
 const HISTORY_KEY = "cuberanked.practice.history";
@@ -81,12 +96,13 @@ const playModes = [
   { title: "Practice", description: "Offline 3x3 trainer", available: true, mode: "practice" },
   { title: "Bot Race", description: "Race a human-like opponent", available: true, mode: "bot-race" },
   { title: "Ranked", description: "Find a live opponent", available: true, mode: "ranked" },
-  { title: "Private Room", description: "Invite-only lobby", available: false, mode: "private-room" },
+  { title: "Private Room", description: "Invite-only lobby", available: true, mode: "private" },
   { title: "Weekly Challenge", description: "Rotating official scramble", available: false, mode: "weekly" },
 ] as const;
 
 type PlayableStage = Extract<GameStage, "COUNTDOWN" | "READY" | "INSPECTION" | "PLAYING" | "SOLVED" | "RESULT">;
 type SettingsCategory = "General" | "Appearance" | "Controls" | "Cube" | "Graphics" | "Audio" | "Accessibility";
+type AuthModal = "none" | "login" | "register" | "profile";
 
 interface BotRaceStats {
   wins: number;
@@ -145,6 +161,7 @@ export default function App() {
   const [onlineMatch, setOnlineMatch] = useState<MatchFoundPayload | null>(null);
   const [onlinePlayers, setOnlinePlayers] = useState<MatchPlayerSnapshot[]>([]);
   const [onlineResult, setOnlineResult] = useState<OnlineRaceResult | null>(null);
+  const [authModal, setAuthModal] = useState<AuthModal>("none");
   const solveStartRef = useRef(0);
   const inspectionStartRef = useRef(0);
   const pausedAtRef = useRef<number | null>(null);
@@ -156,6 +173,25 @@ export default function App() {
   const onlineFinishSentRef = useRef(false);
   const backendHealth = useBackendHealth();
   const socketSnapshot = useSocketConnection();
+  const auth = useAuth();
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const roomCode = params.get("room");
+    if (roomCode) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      dispatch({ type: "SELECT_PRIVATE" });
+      
+      const checkAndJoin = () => {
+        if (socketManager.getSnapshot().connectionState === "connected") {
+          socketManager.joinRoom(roomCode);
+        } else {
+          window.setTimeout(checkAndJoin, 200);
+        }
+      };
+      checkAndJoin();
+    }
+  }, []);
 
   const cube = useCubeStore((state) => state.cube);
   const activeMove = useCubeStore((state) => state.activeMove);
@@ -179,9 +215,20 @@ export default function App() {
   const isRanked = gameMode === "ranked";
   const inspectionRemaining = Math.max(0, 15 - inspectionElapsedMs / 1_000);
   const cubeSolved = isSolved();
+  const effectiveInspectionEnabled = gameMode === "private" && socketSnapshot.roomState 
+    ? socketSnapshot.roomState.settings.inspectionEnabled 
+    : settings.inspectionEnabled;
 
   const updateSettings = useCallback((next: Partial<SessionSettings>) => {
+    if (next.theme !== undefined) {
+      audioManager.playThemeSwitch();
+    }
     setSettings((current) => ({ ...current, ...next }));
+  }, []);
+
+  const handleAuthError = useCallback((error: unknown) => {
+    setNotice(error instanceof Error ? error.message : "Authentication failed");
+    window.setTimeout(() => setNotice(null), 2_200);
   }, []);
 
   const resetSolveState = useCallback((targetScramble = scramble) => {
@@ -285,14 +332,15 @@ export default function App() {
   }, []);
 
   const beginInspection = useCallback(() => {
-    if (isBotRace || stage !== "READY" || overlay !== "NONE" || !settings.inspectionEnabled) {
+    if (isBotRace || stage !== "READY" || overlay !== "NONE" || !effectiveInspectionEnabled) {
       return;
     }
 
     resetSolveState();
     inspectionStartRef.current = performance.now();
+    audioManager.playInspectionStart();
     dispatch({ type: "START_INSPECTION" });
-  }, [isBotRace, overlay, resetSolveState, settings.inspectionEnabled, stage]);
+  }, [isBotRace, overlay, resetSolveState, effectiveInspectionEnabled, stage]);
 
   const finishBotRace = useCallback((finalElapsedMs: number) => {
     if (!botOpponent || raceFinishedRef.current) {
@@ -366,6 +414,7 @@ export default function App() {
     setSolveHistory((current) => [record, ...current].slice(0, 120));
     setElapsedMs(finalElapsedMs);
     solveStartRef.current = 0;
+    audioManager.playSolveComplete();
     dispatch({ type: "SOLVE_COMPLETE" });
   }, [finishBotRace, isBotRace, isRanked, onlineMatch, penalty, scramble, solveHistory, solveMoveCount]);
 
@@ -374,9 +423,7 @@ export default function App() {
       return false;
     }
 
-    if ((isBotRace || isRanked) && stage !== "PLAYING") {
-      return false;
-    }
+
 
     if (stage === "INSPECTION") {
       const inspectionMs = performance.now() - inspectionStartRef.current;
@@ -461,18 +508,35 @@ export default function App() {
   };
 
   const returnHome = () => {
+    if (stage === "PRIVATE_LOBBY") {
+      socketManager.leaveRoom();
+      setShowScramble(false);
+      setOnlineMatch(null);
+      setOnlineResult(null);
+      onlineStartAtRef.current = null;
+      onlineFinishSentRef.current = false;
+      dispatch({ type: "BACK_HOME" });
+      return;
+    }
+
     if (onlineMatch) {
       socketManager.sendReturnHome(onlineMatch.matchId);
     }
     if (stage === "MATCHMAKING") {
       socketManager.cancelQueue();
     }
+
     setShowScramble(false);
     setOnlineMatch(null);
     setOnlineResult(null);
     onlineStartAtRef.current = null;
     onlineFinishSentRef.current = false;
-    dispatch({ type: "BACK_HOME" });
+
+    if (gameMode === "private") {
+      dispatch({ type: "SELECT_PRIVATE" });
+    } else {
+      dispatch({ type: "BACK_HOME" });
+    }
   };
 
   const tickOpponentCube = useCallback((deltaSeconds: number) => {
@@ -547,10 +611,66 @@ export default function App() {
   }, [botRaceStats]);
 
   useEffect(() => {
+    if (auth.mode !== "authenticated" || !auth.user) {
+      return;
+    }
+
+    setSettings((current) => ({ ...current, ...auth.user!.settings }));
+    setSolveHistory(Array.isArray(auth.user.statistics.practiceHistory) ? auth.user.statistics.practiceHistory : []);
+    setBotRaceStats({
+      wins: auth.user.statistics.botWins,
+      losses: auth.user.statistics.botLosses,
+    });
+  }, [auth.mode, auth.user?.id]);
+
+  useEffect(() => {
+    if (socketSnapshot.connectionState === "connected") {
+      if (auth.mode === "authenticated" && auth.user) {
+        socketManager.authenticateSession(auth.user.username, auth.user.avatar);
+      }
+    }
+  }, [auth.mode, auth.user?.username, auth.user?.avatar, socketSnapshot.connectionState]);
+
+  useEffect(() => {
+    if (auth.mode !== "authenticated") {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void auth.syncSettings(settings).catch(() => undefined);
+    }, 700);
+
+    return () => window.clearTimeout(timeout);
+  }, [auth.mode, auth.syncSettings, settings]);
+
+  useEffect(() => {
+    if (auth.mode !== "authenticated") {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void auth.syncStatistics(buildCloudStatistics(solveHistory, botRaceStats)).catch(() => undefined);
+    }, 900);
+
+    return () => window.clearTimeout(timeout);
+  }, [auth.mode, auth.syncStatistics, botRaceStats, solveHistory]);
+
+  useEffect(() => {
     if (settings.animationSpeed !== turnDuration) {
       setTurnDuration(settings.animationSpeed);
     }
   }, [setTurnDuration, settings.animationSpeed, turnDuration]);
+
+  useEffect(() => {
+    if (gameMode === "private" && socketSnapshot.roomState?.status === "lobby" && stage !== "PRIVATE_LOBBY" && stage !== "HOME" && stage !== "MODE_SELECT") {
+      setShowScramble(false);
+      setOnlineMatch(null);
+      setOnlineResult(null);
+      onlineStartAtRef.current = null;
+      onlineFinishSentRef.current = false;
+      dispatch({ type: "SELECT_PRIVATE" });
+    }
+  }, [gameMode, socketSnapshot.roomState?.status, stage]);
 
   useEffect(() => {
     if (stage !== "MATCH_LOADING") {
@@ -637,14 +757,24 @@ export default function App() {
       serverClockOffsetRef.current = Date.now() - payload.serverNow;
       dispatch({ type: "START_COUNTDOWN" });
       setCountdownValue("3");
+      audioManager.playCountdownBeep();
 
+      let lastPlayedValue = "3";
       const countdownEndAt = payload.countdownAt + payload.countdownMs;
       const updateCountdown = () => {
         const remainingMs = countdownEndAt - (Date.now() - serverClockOffsetRef.current);
-        if (remainingMs > 2_000) setCountdownValue("3");
-        else if (remainingMs > 1_000) setCountdownValue("2");
-        else if (remainingMs > 0) setCountdownValue("1");
-        else setCountdownValue("GO");
+        let newVal: string;
+        if (remainingMs > 2_000) newVal = "3";
+        else if (remainingMs > 1_000) newVal = "2";
+        else if (remainingMs > 0) newVal = "1";
+        else newVal = "GO";
+
+        if (newVal !== lastPlayedValue) {
+          lastPlayedValue = newVal;
+          setCountdownValue(newVal);
+          if (newVal === "GO") audioManager.playGo();
+          else audioManager.playCountdownBeep(newVal === "1");
+        }
       };
 
       updateCountdown();
@@ -661,12 +791,27 @@ export default function App() {
     const unsubscribeOpponentMove = socketManager.onMatchEvent("opponentMove", (payload) => {
       try {
         const move = parseMove(payload.move);
-        setOnlineOpponent((current) => current ? {
-          ...current,
-          status: "solving",
-          moveCount: current.moveCount + 1,
-        } : current);
-        setOnlineOpponentCube((current) => current ? enqueueAnimatedMove(current, move) : current);
+        const isSpec = socketSnapshot.roomState?.spectator?.clientId === socketSnapshot.clientId;
+
+        if (isSpec && socketSnapshot.roomState) {
+          if (payload.clientId === socketSnapshot.roomState.host.clientId) {
+            useCubeStore.getState().enqueueMove(move);
+          } else if (payload.clientId === socketSnapshot.roomState.guest?.clientId) {
+            setOnlineOpponent((current) => current ? {
+              ...current,
+              status: "solving",
+              moveCount: current.moveCount + 1,
+            } : current);
+            setOnlineOpponentCube((current) => current ? enqueueAnimatedMove(current, move) : current);
+          }
+        } else {
+          setOnlineOpponent((current) => current ? {
+            ...current,
+            status: "solving",
+            moveCount: current.moveCount + 1,
+          } : current);
+          setOnlineOpponentCube((current) => current ? enqueueAnimatedMove(current, move) : current);
+        }
       } catch {
         setNotice("Ignored opponent move");
         window.setTimeout(() => setNotice(null), 1_200);
@@ -704,6 +849,24 @@ export default function App() {
         loserClientId: payload.loserClientId,
         timeDifferenceMs: payload.timeDifferenceMs,
       };
+
+      if (gameMode === "private" && you && opponent) {
+        try {
+          const privateHistory = JSON.parse(localStorage.getItem("cuberanked.private_history") || "[]");
+          const newRecord = {
+            id: payload.matchId,
+            opponent: opponent.username,
+            timeMs: you.finalTimeMs,
+            winner: payload.winnerClientId === socketSnapshot.clientId ? "You" : opponent.username,
+            date: new Date().toISOString(),
+            replayId: `replay-${payload.matchId.slice(0, 8)}`,
+          };
+          privateHistory.unshift(newRecord);
+          localStorage.setItem("cuberanked.private_history", JSON.stringify(privateHistory.slice(0, 50)));
+        } catch (err) {
+          console.error("Error saving private match history:", err);
+        }
+      }
 
       setOnlineResult(result);
       setRaceResult(resultToRaceResult(result));
@@ -758,7 +921,7 @@ export default function App() {
   }, [gameMode]);
 
   useEffect(() => {
-    if (stage !== "COUNTDOWN" || !isBotRace || overlay !== "NONE") {
+    if (stage !== "COUNTDOWN" || gameMode === "ranked" || gameMode === "private" || overlay !== "NONE") {
       return;
     }
 
@@ -778,22 +941,33 @@ export default function App() {
     } : current);
 
     const timeouts = [
-      window.setTimeout(() => setCountdownValue("2"), 850),
-      window.setTimeout(() => setCountdownValue("1"), 1_700),
-      window.setTimeout(() => setCountdownValue("GO"), 2_550),
+      window.setTimeout(() => { setCountdownValue("2"); audioManager.playCountdownBeep(); }, 850),
+      window.setTimeout(() => { setCountdownValue("1"); audioManager.playCountdownBeep(true); }, 1_700),
+      window.setTimeout(() => { setCountdownValue("GO"); audioManager.playGo(); }, 2_550),
       window.setTimeout(() => {
         const now = performance.now();
         solveStartRef.current = now;
         setElapsedMs(0);
         setBotOpponent((current) => current ? { ...current, status: "solving" } : current);
+        // For bot race: COUNTDOWN_COMPLETE → READY, player starts on first move
+        // The bot timer started here, player timer starts on first move
         dispatch({ type: "COUNTDOWN_COMPLETE" });
       }, 3_050),
     ];
 
+    // Play first beep immediately
+    audioManager.playCountdownBeep();
+
     return () => {
       timeouts.forEach((timeout) => window.clearTimeout(timeout));
     };
-  }, [isBotRace, overlay, stage]);
+  }, [gameMode, overlay, stage]);
+
+  useEffect(() => {
+    if (stage === "READY" && effectiveInspectionEnabled && overlay === "NONE") {
+      beginInspection();
+    }
+  }, [stage, effectiveInspectionEnabled, overlay, beginInspection]);
 
   useEffect(() => {
     const shouldFreezeTimer = overlay !== "NONE" && (stage === "PLAYING" || stage === "INSPECTION");
@@ -937,7 +1111,8 @@ export default function App() {
         return;
       }
 
-      if (overlay !== "NONE" || stage === "MODE_SELECT" || stage === "MATCH_LOADING" || stage === "RESULT") {
+      const isSpectator = socketSnapshot.roomState?.spectator?.clientId === socketSnapshot.clientId;
+      if (overlay !== "NONE" || stage === "MODE_SELECT" || stage === "MATCH_LOADING" || stage === "RESULT" || isSpectator) {
         return;
       }
 
@@ -973,11 +1148,15 @@ export default function App() {
         return;
       }
 
-      const key = event.key.toUpperCase();
+      const pressedKey = event.key.toUpperCase();
+      const bindings = settings.keybindings || DEFAULT_SETTINGS.keybindings;
+      const face = (Object.keys(bindings) as Face[]).find(
+        (f) => bindings[f]?.toUpperCase() === pressedKey
+      );
 
-      if (MOVE_FACES.includes(key as Face)) {
+      if (face && MOVE_FACES.includes(face)) {
         event.preventDefault();
-        playFace(key as Face, event.shiftKey ? inverseTurnMode(turnMode) : turnMode);
+        playFace(face, event.shiftKey ? inverseTurnMode(turnMode) : turnMode);
       }
     };
 
@@ -1005,11 +1184,18 @@ export default function App() {
             key="home"
             connectionState={socketSnapshot.connectionState}
             onlineCount={socketSnapshot.onlineCount}
-            onPlay={() => dispatch({ type: "OPEN_MODE_SELECT" })}
-            onQuickPlay={() => dispatch({ type: "OPEN_MODE_SELECT" })}
-            onContinuePractice={() => dispatch({ type: "SELECT_PRACTICE" })}
+            authMode={auth.mode}
+            user={auth.user}
             onSettings={() => dispatch({ type: "OPEN_APP_SETTINGS" })}
-            onProfile={() => showComingSoon("Profile")}
+            onLogin={() => setAuthModal("login")}
+            onRegister={() => setAuthModal("register")}
+            onGuest={auth.continueAsGuest}
+            onProfile={() => setAuthModal(auth.mode === "authenticated" ? "profile" : "login")}
+            onLogout={() => void auth.logout().catch(handleAuthError)}
+            onPractice={() => dispatch({ type: "SELECT_PRACTICE" })}
+            onBotRace={() => dispatch({ type: "SELECT_BOT_RACE" })}
+            onRanked={enterRankedQueue}
+            onPrivate={() => dispatch({ type: "SELECT_PRIVATE" })}
           />
         ) : stage === "MATCHMAKING" ? (
           <QueueScreen
@@ -1017,6 +1203,14 @@ export default function App() {
             queue={queueUpdate}
             connectionState={socketSnapshot.connectionState}
             onCancel={cancelRankedQueue}
+          />
+        ) : stage === "PRIVATE_LOBBY" ? (
+          <PrivateLobbyScreen
+            key="private-lobby"
+            roomState={socketSnapshot.roomState}
+            roomError={socketSnapshot.roomError}
+            clientId={socketSnapshot.clientId}
+            onBack={returnHome}
           />
         ) : stage === "MATCH_LOADING" ? (
           <LoadingScreen key={`loading-${gameState.loadingId}`} mode={gameMode ?? "practice"} opponent={onlineMatch?.opponent?.username ?? null} />
@@ -1038,6 +1232,7 @@ export default function App() {
             onOpponentFrame={gameMode === "bot-race" ? tickOpponentCube : tickOnlineOpponentCube}
             onHome={returnHome}
             onSettings={() => dispatch({ type: "OPEN_PRACTICE_SETTINGS" })}
+            effectiveInspectionEnabled={effectiveInspectionEnabled}
           />
         )}
       </AnimatePresence>
@@ -1049,6 +1244,7 @@ export default function App() {
             onPractice={() => dispatch({ type: "SELECT_PRACTICE" })}
             onBotRace={() => dispatch({ type: "SELECT_BOT_RACE" })}
             onRanked={enterRankedQueue}
+            onPrivate={() => dispatch({ type: "SELECT_PRIVATE" })}
             onLockedMode={showComingSoon}
           />
         ) : null}
@@ -1063,6 +1259,7 @@ export default function App() {
             showScramble={showScramble}
             copyLabel={copyLabel}
             turnMode={turnMode}
+            allowReset={!(gameMode === "ranked" || gameMode === "private") || (stage !== "PLAYING" && stage !== "SOLVED")}
             onClose={() => dispatch({ type: "CLOSE_OVERLAY" })}
             onGenerate={requestNewScramble}
             onReset={restartCurrentSolve}
@@ -1073,6 +1270,11 @@ export default function App() {
             onToggleScramble={() => setShowScramble((current) => !current)}
             onSettings={updateSettings}
             onTurnMode={setTurnMode}
+            onOpenRebinds={() => {
+              dispatch({ type: "CLOSE_OVERLAY" });
+              setSettingsCategory("Controls");
+              dispatch({ type: "OPEN_APP_SETTINGS" });
+            }}
           />
         ) : null}
       </AnimatePresence>
@@ -1117,6 +1319,60 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {authModal === "login" || authModal === "register" ? (
+          <AuthDialog
+            mode={authModal}
+            error={auth.error}
+            onClose={() => {
+              auth.clearError();
+              setAuthModal("none");
+            }}
+            onMode={setAuthModal}
+            onGuest={() => {
+              auth.continueAsGuest();
+              setAuthModal("none");
+            }}
+            onLogin={async (input) => {
+              try {
+                await auth.login(input);
+                setAuthModal("none");
+              } catch (error) {
+                handleAuthError(error);
+              }
+            }}
+            onRegister={async (input) => {
+              try {
+                await auth.register(input);
+                setAuthModal("none");
+              } catch (error) {
+                handleAuthError(error);
+              }
+            }}
+            onOAuth={(provider) => void auth.startOAuth(provider).catch(handleAuthError)}
+          />
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {authModal === "profile" && auth.user ? (
+          <ProfileDialog
+            user={auth.user}
+            onClose={() => setAuthModal("none")}
+            onSave={async (patch) => {
+              if (patch.theme) {
+                updateSettings({ theme: patch.theme });
+              }
+              await auth.updateProfile(patch);
+            }}
+            onLogout={() => {
+              void auth.logout().catch(handleAuthError);
+              setAuthModal("none");
+            }}
+          />
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {notice ? (
           <motion.div
             className="client-toast"
@@ -1141,19 +1397,33 @@ export default function App() {
 function HomeScreen({
   connectionState,
   onlineCount,
-  onPlay,
-  onQuickPlay,
-  onContinuePractice,
+  authMode,
+  user,
   onSettings,
+  onLogin,
+  onRegister,
+  onGuest,
   onProfile,
+  onLogout,
+  onPractice,
+  onBotRace,
+  onRanked,
+  onPrivate,
 }: {
   connectionState: SocketConnectionState;
   onlineCount: number;
-  onPlay: () => void;
-  onQuickPlay: () => void;
-  onContinuePractice: () => void;
+  authMode: "loading" | "guest" | "authenticated";
+  user: UserProfile | null;
   onSettings: () => void;
+  onLogin: () => void;
+  onRegister: () => void;
+  onGuest: () => void;
   onProfile: () => void;
+  onLogout: () => void;
+  onPractice: () => void;
+  onBotRace: () => void;
+  onRanked: () => void;
+  onPrivate: () => void;
 }) {
   return (
     <motion.section
@@ -1172,73 +1442,131 @@ function HomeScreen({
         />
       </div>
 
-      <header className="home-topbar">
-        <div className="launcher-brand">
-          <img src="/CubeRankedLogo.png" alt="" aria-hidden="true" />
-          <strong>CubeRanked</strong>
+      <header className="home-topbar-new">
+        <div className="launcher-brand-new">
+          <Gamepad2 size={24} className="brand-logo" />
+          <div className="brand-text">
+            <h2>CubeRanked</h2>
+            <span>Speed & Skill</span>
+          </div>
         </div>
-        <nav className="launcher-nav" aria-label="Primary">
-          <button type="button" className="selected">Home</button>
-          <button type="button" onClick={onQuickPlay}>Play</button>
-          <button type="button" onClick={onSettings}>Settings</button>
-        </nav>
-        <div className={`connection-pill connection-${connectionState}`}>
-          <span />
-          {connectionLabel(connectionState)}
+
+        <div className="top-right-actions">
+          <div className={`connection-pill connection-${connectionState}`}>
+            <span />
+            {connectionLabel(connectionState)}
+          </div>
+          <div className="online-count-badge">
+            <span className="pulse-dot" />
+            {onlineCount.toLocaleString()} Online
+          </div>
+          
+          {authMode === "authenticated" && user ? (
+            <div className="user-profile-widget">
+              <button type="button" className="profile-chip-btn" onClick={onProfile}>
+                <span>{user.avatar ? "" : user.username.slice(0, 2).toUpperCase()}</span>
+                {user.avatar ? <img src={user.avatar} alt="" /> : null}
+                <strong>{user.username}</strong>
+              </button>
+              <button type="button" className="logout-icon-btn" onClick={onLogout} title="Logout">
+                <LogOut size={16} />
+              </button>
+            </div>
+          ) : authMode === "guest" ? (
+            <div className="user-profile-widget">
+              <button type="button" className="profile-chip-btn" onClick={onLogin}>
+                <span>G</span>
+                <strong>Guest Player</strong>
+              </button>
+              <button type="button" className="auth-action-btn" onClick={onLogin}>
+                Sign In
+              </button>
+            </div>
+          ) : (
+            <div className="auth-buttons">
+              <button type="button" className="auth-btn login" onClick={onLogin}>
+                <LogIn size={14} /> Log In
+              </button>
+              <button type="button" className="auth-btn register" onClick={onRegister}>
+                <UserPlus size={14} /> Register
+              </button>
+              <button type="button" className="auth-btn guest" onClick={onGuest}>
+                <User size={14} /> Guest
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
-      <div className="home-status-row">
-        <div className="online-count-pill">
-          {onlineCount.toLocaleString()} Players Online
+      <div className="lobby-modes-container">
+        <div className="lobby-modes-header">
+          <span>Select Game Mode</span>
+          <h1>LOBBY</h1>
+        </div>
+        
+        <div className="lobby-modes-grid">
+          <button type="button" className="lobby-mode-card" onClick={onPractice}>
+            <div className="mode-card-icon-wrap icon-practice">
+              <Gamepad2 size={28} />
+            </div>
+            <div className="mode-card-info">
+              <h3>Practice</h3>
+              <p>Offline 3x3 trainer & scramble stats</p>
+            </div>
+            <div className="mode-card-status select-text">
+              Enter Mode
+            </div>
+          </button>
+
+          <button type="button" className="lobby-mode-card" onClick={onBotRace}>
+            <div className="mode-card-icon-wrap icon-bot">
+              <Tv size={28} />
+            </div>
+            <div className="mode-card-info">
+              <h3>Bot Race</h3>
+              <p>Race a human-like AI speedcuber</p>
+            </div>
+            <div className="mode-card-status select-text">
+              Enter Mode
+            </div>
+          </button>
+
+          <button type="button" className="lobby-mode-card" onClick={onRanked}>
+            <div className="mode-card-icon-wrap icon-ranked">
+              <Trophy size={28} />
+            </div>
+            <div className="mode-card-info">
+              <h3>Ranked</h3>
+              <p>Matchmake against live opponents online</p>
+            </div>
+            <div className="mode-card-status select-text">
+              Find Match
+            </div>
+          </button>
+
+          <button type="button" className="lobby-mode-card" onClick={onPrivate}>
+            <div className="mode-card-icon-wrap icon-private">
+              <Users size={28} />
+            </div>
+            <div className="mode-card-info">
+              <h3>Private Room</h3>
+              <p>Create or join custom multiplayer lobby</p>
+            </div>
+            <div className="mode-card-status select-text">
+              Join Room
+            </div>
+          </button>
         </div>
       </div>
 
-      <div className="home-center">
-        <motion.div
-          className="launcher-copy"
-          initial={{ y: 18, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ type: "spring", stiffness: 130, damping: 20 }}
-        >
-          <span>Competitive 3x3 Client</span>
-          <h1>Ready to race?</h1>
-          <p>Queue online, practice offline, or warm up against a bot.</p>
-        </motion.div>
-        <motion.button
-          type="button"
-          className="play-button"
-          onClick={onPlay}
-          initial={{ y: 18, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ type: "spring", stiffness: 130, damping: 20, delay: 0.08 }}
-          whileHover={{ scale: 1.03 }}
-          whileTap={{ scale: 0.98 }}
-        >
-          <Play size={22} aria-hidden="true" />
-          Play
-        </motion.button>
-        <motion.div
-          className="quick-actions"
-          initial={{ y: 18, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ type: "spring", stiffness: 130, damping: 20, delay: 0.14 }}
-        >
-          <button type="button" onClick={onQuickPlay}>Quick Play</button>
-          <button type="button" onClick={onContinuePractice}>Continue Practice</button>
-        </motion.div>
-      </div>
-
-      <footer className="home-footer">
-        <span>{VERSION}</span>
-        <div className="home-actions">
-          <button type="button" onClick={onSettings}>
-            <Settings size={16} aria-hidden="true" />
+      <footer className="home-footer-new">
+        <div className="footer-left">
+          <span>Client Version {VERSION}</span>
+        </div>
+        <div className="footer-right">
+          <button type="button" className="footer-settings-btn" onClick={onSettings}>
+            <Settings size={16} />
             Settings
-          </button>
-          <button type="button" onClick={onProfile}>
-            <User size={16} aria-hidden="true" />
-            Profile
           </button>
         </div>
       </footer>
@@ -1250,7 +1578,7 @@ function LoadingScreen({
   mode,
   opponent,
 }: {
-  mode: "practice" | "bot-race" | "ranked";
+  mode: GameMode;
   opponent: string | null;
 }) {
   const status = mode === "ranked"
@@ -1357,12 +1685,14 @@ function PlayModal({
   onPractice,
   onBotRace,
   onRanked,
+  onPrivate,
   onLockedMode,
 }: {
   onClose: () => void;
   onPractice: () => void;
   onBotRace: () => void;
   onRanked: () => void;
+  onPrivate: () => void;
   onLockedMode: (mode: string) => void;
 }) {
   return (
@@ -1402,7 +1732,9 @@ function PlayModal({
                     ? onBotRace
                     : mode.mode === "ranked"
                       ? onRanked
-                      : () => onLockedMode(mode.title)
+                      : mode.mode === "private"
+                        ? onPrivate
+                        : () => onLockedMode(mode.title)
               }
             >
               <div className="mode-icon">
@@ -1416,6 +1748,389 @@ function PlayModal({
         </div>
       </motion.section>
     </motion.div>
+  );
+}
+
+interface PrivateLobbyScreenProps {
+  roomState: RoomState | null;
+  roomError: string | null;
+  clientId: string | null;
+  onBack: () => void;
+}
+
+function PrivateLobbyScreen({ roomState, roomError, clientId, onBack }: PrivateLobbyScreenProps) {
+  const [joinCode, setJoinCode] = useState("");
+  const [chatText, setChatText] = useState("");
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [roomState?.chat]);
+
+  const handleCreate = () => {
+    socketManager.createRoom();
+  };
+
+  const handleJoin = (e: FormEvent) => {
+    e.preventDefault();
+    if (joinCode.trim().length === 6) {
+      socketManager.joinRoom(joinCode.trim().toUpperCase());
+    }
+  };
+
+  const handleSpectate = (e: FormEvent) => {
+    e.preventDefault();
+    if (joinCode.trim().length === 6) {
+      socketManager.spectateRoom(joinCode.trim().toUpperCase());
+    }
+  };
+
+  const handleSendChat = (e: FormEvent) => {
+    e.preventDefault();
+    if (chatText.trim()) {
+      socketManager.sendRoomChat(chatText.trim());
+      setChatText("");
+    }
+  };
+
+  const handleSettingsChange = (update: Partial<RoomSettings>) => {
+    socketManager.updateRoomSettings(update);
+  };
+
+  const handleCopyCode = () => {
+    if (!roomState) return;
+    navigator.clipboard.writeText(roomState.code).catch(() => undefined);
+  };
+
+  const handleCopyLink = () => {
+    if (!roomState) return;
+    const link = `${window.location.origin}${window.location.pathname}?room=${roomState.code}`;
+    navigator.clipboard.writeText(link).catch(() => undefined);
+  };
+
+  const isHost = roomState?.host.clientId === clientId;
+  const isGuest = roomState?.guest?.clientId === clientId;
+  const isSpectator = roomState?.spectator?.clientId === clientId;
+
+  const canStart = roomState && roomState.host.ready && roomState.guest?.ready && roomState.host.connected && roomState.guest.connected;
+
+  if (!roomState) {
+    return (
+      <motion.section
+        className="private-setup-screen"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+      >
+        <div className="home-bg">
+          <div className="client-grid" />
+        </div>
+
+        <div className="setup-container">
+          <header className="setup-header">
+            <button type="button" className="back-btn" onClick={onBack}>
+              <ChevronLeft size={16} />
+              Back
+            </button>
+            <h2>Private Multiplayer</h2>
+          </header>
+
+          <div className="setup-card">
+            <h3>Create a Room</h3>
+            <p>Start a new private match lobby and invite your friends to race.</p>
+            <button type="button" className="create-room-btn" onClick={handleCreate}>
+              <Play size={16} />
+              Create Room
+            </button>
+
+            <div className="divider"><span>OR</span></div>
+
+            <h3>Join Room</h3>
+            <form onSubmit={handleJoin} className="join-form">
+              <input
+                type="text"
+                placeholder="Enter 6-char code (e.g. A7K9XM)"
+                maxLength={6}
+                value={joinCode}
+                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                className="code-input"
+              />
+              <div className="join-actions">
+                <button type="submit" disabled={joinCode.trim().length !== 6} className="join-btn">
+                  Join as Player
+                </button>
+                <button type="button" onClick={handleSpectate} disabled={joinCode.trim().length !== 6} className="spectate-btn">
+                  <Tv size={16} />
+                  Spectate
+                </button>
+              </div>
+            </form>
+
+            {roomError && (
+              <div className="room-error-alert">
+                {roomError}
+              </div>
+            )}
+          </div>
+        </div>
+      </motion.section>
+    );
+  }
+
+  const hostWins = roomState.scores[roomState.host.clientId] || 0;
+  const guestWins = roomState.guest ? (roomState.scores[roomState.guest.clientId] || 0) : 0;
+
+  return (
+    <motion.section
+      className="private-lobby-screen"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      <div className="home-bg">
+        <div className="client-grid" />
+      </div>
+
+      <div className="lobby-container">
+        <header className="lobby-header">
+          <button type="button" className="back-btn" onClick={() => socketManager.leaveRoom()}>
+            <ChevronLeft size={16} />
+            Leave Room
+          </button>
+          <div className="lobby-title">
+            <span>Room Code</span>
+            <h2>{roomState.code}</h2>
+          </div>
+          <div className="invite-actions">
+            <button type="button" onClick={handleCopyCode} className="action-chip">
+              <Copy size={14} />
+              Copy Code
+            </button>
+            <button type="button" onClick={handleCopyLink} className="action-chip">
+              <Share2 size={14} />
+              Copy Link
+            </button>
+          </div>
+        </header>
+
+        <div className="lobby-grid">
+          <div className="lobby-players-panel">
+            <h3>Lobby Players</h3>
+            <div className="players-list">
+              <div className={`lobby-player-card ${roomState.host.connected ? "online" : "offline"}`}>
+                <div className="player-avatar">
+                  {roomState.host.avatar ? (
+                    <img src={roomState.host.avatar} alt="" />
+                  ) : (
+                    roomState.host.username.slice(0, 2).toUpperCase()
+                  )}
+                </div>
+                <div className="player-info">
+                  <div className="name-row">
+                    <strong>{roomState.host.username}</strong>
+                    <span className="role-tag">Host</span>
+                  </div>
+                  <span className="ping-text">{roomState.host.connected ? `Ping: ${roomState.host.pingMs ?? "--"}ms` : "Disconnected"}</span>
+                </div>
+                <div className={`ready-badge ${roomState.host.ready ? "ready" : "not-ready"}`}>
+                  {roomState.host.ready ? "READY" : "NOT READY"}
+                </div>
+              </div>
+
+              {roomState.guest ? (
+                <div className={`lobby-player-card ${roomState.guest.connected ? "online" : "offline"}`}>
+                  <div className="player-avatar">
+                    {roomState.guest.avatar ? (
+                      <img src={roomState.guest.avatar} alt="" />
+                    ) : (
+                      roomState.guest.username.slice(0, 2).toUpperCase()
+                    )}
+                  </div>
+                  <div className="player-info">
+                    <div className="name-row">
+                      <strong>{roomState.guest.username}</strong>
+                      <span className="role-tag">Guest</span>
+                    </div>
+                    <span className="ping-text">{roomState.guest.connected ? `Ping: ${roomState.guest.pingMs ?? "--"}ms` : "Disconnected"}</span>
+                  </div>
+                  <div className={`ready-badge ${roomState.guest.ready ? "ready" : "not-ready"}`}>
+                    {roomState.guest.ready ? "READY" : "NOT READY"}
+                  </div>
+                </div>
+              ) : (
+                <div className="lobby-player-card empty">
+                  <Users size={20} />
+                  <span>Waiting for guest...</span>
+                </div>
+              )}
+
+              {roomState.spectator ? (
+                <div className="lobby-player-card spectator">
+                  <div className="player-avatar">
+                    {roomState.spectator.username.slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="player-info">
+                    <div className="name-row">
+                      <strong>{roomState.spectator.username}</strong>
+                      <span className="role-tag spec">Spectator</span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="lobby-score-board">
+              <h4>Series Score</h4>
+              <div className="scores-row">
+                <div className="score-block">
+                  <span className="player-label">Host</span>
+                  <span className="score-num">{hostWins}</span>
+                </div>
+                <div className="score-divider">:</div>
+                <div className="score-block">
+                  <span className="player-label">Guest</span>
+                  <span className="score-num">{guestWins}</span>
+                </div>
+              </div>
+              <div className="best-of-target">
+                First to {Math.ceil(roomState.settings.bestOf / 2)} wins (Best of {roomState.settings.bestOf})
+              </div>
+            </div>
+          </div>
+
+          <div className="lobby-details-panel">
+            <div className="lobby-settings-card">
+              <h3>Match Settings</h3>
+              <div className="settings-grid">
+                <label className="select-row">
+                  <span>Puzzle</span>
+                  <select disabled value="3x3">
+                    <option value="3x3">3x3</option>
+                  </select>
+                </label>
+                <label className="select-row">
+                  <span>Game Type</span>
+                  <select disabled value="race">
+                    <option value="race">Race</option>
+                  </select>
+                </label>
+                <label className="switch-row compact">
+                  <span>Inspection (15s)</span>
+                  <input
+                    type="checkbox"
+                    checked={roomState.settings.inspectionEnabled}
+                    disabled={!isHost}
+                    onChange={(e) => handleSettingsChange({ inspectionEnabled: e.target.checked })}
+                  />
+                </label>
+                <label className="select-row">
+                  <span>Series Length</span>
+                  <select
+                    value={roomState.settings.bestOf}
+                    disabled={!isHost}
+                    onChange={(e) => handleSettingsChange({ bestOf: Number(e.target.value) as 1 | 3 | 5 })}
+                  >
+                    <option value={1}>Best of 1 (Single)</option>
+                    <option value={3}>Best of 3</option>
+                    <option value={5}>Best of 5</option>
+                  </select>
+                </label>
+                <label className="select-row">
+                  <span>Scramble Visibility</span>
+                  <select
+                    value={roomState.settings.scrambleVisibility}
+                    disabled={!isHost}
+                    onChange={(e) => handleSettingsChange({ scrambleVisibility: e.target.value as "hidden" | "visible" })}
+                  >
+                    <option value="hidden">Hidden during race</option>
+                    <option value="visible">Visible (Practice Mode)</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div className="lobby-chat-card">
+              <h3>Lobby Chat</h3>
+              <div className="chat-messages-box">
+                {roomState.chat.map((msg: ChatMessage) => {
+                  const isSys = msg.senderName === "System";
+                  return (
+                    <div key={msg.id} className={`chat-line ${isSys ? "system" : ""}`}>
+                      {!isSys && <span className="chat-sender">{msg.senderName}:</span>}
+                      <span className="chat-text">{msg.text}</span>
+                    </div>
+                  );
+                })}
+                <div ref={chatEndRef} />
+              </div>
+              <form onSubmit={handleSendChat} className="chat-input-form">
+                <input
+                  type="text"
+                  placeholder="Type a message..."
+                  maxLength={140}
+                  value={chatText}
+                  disabled={isSpectator}
+                  onChange={(e) => setChatText(e.target.value)}
+                />
+                <button type="submit" disabled={!chatText.trim() || isSpectator}>
+                  <Send size={14} />
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <footer className="lobby-footer">
+          {roomState.status === "finished" ? (
+            <div className="series-finished-banner">
+              <h3>
+                🏆 Series Won by{" "}
+                {roomState.winnerClientId === roomState.host.clientId
+                  ? roomState.host.username
+                  : roomState.guest?.username}
+                !
+              </h3>
+              {isHost && (
+                <button type="button" className="reset-series-btn" onClick={() => socketManager.resetRoomSeries()}>
+                  Reset Series
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="action-row">
+              {isSpectator ? (
+                <div className="spec-wait-msg">
+                  Watching match... Waiting for host to start.
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className={`ready-toggle-btn ${
+                      (isHost ? roomState.host.ready : roomState.guest?.ready) ? "is-ready" : ""
+                    }`}
+                    onClick={() => socketManager.toggleRoomReady()}
+                  >
+                    {(isHost ? roomState.host.ready : roomState.guest?.ready) ? "Cancel Ready" : "Press Ready"}
+                  </button>
+
+                  {isHost && (
+                    <button
+                      type="button"
+                      className="start-match-btn"
+                      disabled={!canStart}
+                      onClick={() => socketManager.startRoomMatch()}
+                    >
+                      Start Match
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </footer>
+      </div>
+    </motion.section>
   );
 }
 
@@ -1435,9 +2150,10 @@ function PracticeScreen({
   onOpponentFrame,
   onHome,
   onSettings,
+  effectiveInspectionEnabled,
 }: {
   stage: PlayableStage;
-  mode: "practice" | "bot-race" | "ranked";
+  mode: GameMode;
   elapsedMs: number;
   inspectionRemaining: number;
   penalty: Penalty;
@@ -1451,6 +2167,7 @@ function PracticeScreen({
   onOpponentFrame: (deltaSeconds: number) => void;
   onHome: () => void;
   onSettings: () => void;
+  effectiveInspectionEnabled: boolean;
 }) {
   const showFocusOnly = stage === "COUNTDOWN" || stage === "INSPECTION" || stage === "PLAYING" || stage === "SOLVED";
   const isBotRaceMode = mode === "bot-race";
@@ -1477,7 +2194,9 @@ function PracticeScreen({
         <div className="match-meta">
           <div className="mode-pill">
             <Gamepad2 size={16} aria-hidden="true" />
-            {isRankedMode ? "Ranked" : isBotRaceMode ? "Bot Race" : "Practice"}
+            {mode === "private"
+              ? (socketManager.getSnapshot().roomState?.spectator?.clientId === socketManager.getSnapshot().clientId ? "Spectating" : "Private Match")
+              : isRankedMode ? "Ranked" : isBotRaceMode ? "Bot Race" : "Practice"}
           </div>
           <div className="connection-pill practice">
             <Wifi size={15} aria-hidden="true" />
@@ -1510,8 +2229,8 @@ function PracticeScreen({
           />
         ) : null}
 
-        {settings.showKeyboardCheatSheet && (mode === "practice" || mode === "ranked") ? (
-          <KeyboardCheatSheet />
+        {settings.showKeyboardCheatSheet && (mode === "practice" || mode === "ranked" || mode === "bot-race" || mode === "private") ? (
+          <KeyboardCheatSheet settings={settings} />
         ) : null}
       </div>
 
@@ -1523,7 +2242,10 @@ function PracticeScreen({
 
       <AnimatePresence>
         {stage === "READY" ? (
-          <ReadyOverlay inspectionEnabled={settings.inspectionEnabled} />
+          <ReadyOverlay
+            inspectionEnabled={effectiveInspectionEnabled}
+            isSpectator={mode === "private" && socketManager.getSnapshot().roomState?.spectator?.clientId === socketManager.getSnapshot().clientId}
+          />
         ) : null}
       </AnimatePresence>
 
@@ -1634,28 +2356,64 @@ function DeveloperOverlay({ snapshot }: { snapshot: SocketDebugSnapshot }) {
 }
 
 function CountdownOverlay({ value }: { value: string }) {
+  const isGo = value === "GO";
+  const isRed = value === "3";
+  const isOrange = value === "2";
+  const isGreen = value === "1" || isGo;
+
   return (
     <motion.div
       className="countdown-overlay"
       initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.18 }}
+      animate={{ opacity: 1, backgroundColor: isGo ? "rgba(0,0,0,0)" : "rgba(0,0,0,0.55)" }}
+      exit={{ opacity: 0, scale: 1.04 }}
+      transition={{ duration: 0.35 }}
     >
-      <motion.strong
-        key={value}
-        initial={{ scale: 0.74, opacity: 0, y: 18 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        exit={{ scale: 1.16, opacity: 0, y: -18 }}
-        transition={{ type: "spring", stiffness: 190, damping: 16 }}
-      >
-        {value}
-      </motion.strong>
+      {/* Radial glow behind everything */}
+      <motion.div
+        className="countdown-radial-glow"
+        animate={{
+          opacity: isGo ? 0.3 : 0.7,
+          background: isRed
+            ? "radial-gradient(circle at 50% 50%, rgba(239,68,68,0.4), transparent 60%)"
+            : isOrange
+            ? "radial-gradient(circle at 50% 50%, rgba(245,158,11,0.4), transparent 60%)"
+            : "radial-gradient(circle at 50% 50%, rgba(16,185,129,0.4), transparent 60%)"
+        }}
+        transition={{ duration: 0.3 }}
+      />
+
+      {/* Traffic light housing */}
+      <div className="traffic-light-housing">
+        <div className={`traffic-light-bulb red ${isRed ? "active" : ""}`} />
+        <div className={`traffic-light-bulb orange ${isOrange ? "active" : ""}`} />
+        <div className={`traffic-light-bulb green ${isGreen ? "active" : ""}`} />
+      </div>
+
+      {/* Big number / GO */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={value}
+          className={`countdown-digit ${isGo ? "is-go" : value === "3" ? "is-red" : value === "2" ? "is-orange" : "is-green"}`}
+          initial={{ scale: 0.5, opacity: 0, y: 32, filter: "blur(8px)" }}
+          animate={{ scale: 1, opacity: 1, y: 0, filter: "blur(0px)" }}
+          exit={{ scale: 1.3, opacity: 0, y: -24, filter: "blur(6px)" }}
+          transition={{ type: "spring", stiffness: 280, damping: 20 }}
+        >
+          {value}
+        </motion.div>
+      </AnimatePresence>
     </motion.div>
   );
 }
 
-function ReadyOverlay({ inspectionEnabled }: { inspectionEnabled: boolean }) {
+function ReadyOverlay({ inspectionEnabled, isSpectator }: { inspectionEnabled: boolean; isSpectator?: boolean }) {
+  const message = isSpectator
+    ? "Waiting for match to start..."
+    : inspectionEnabled
+    ? "Inspection starting..."
+    : "Press any move key to start";
+
   return (
     <motion.div
       className="ready-overlay"
@@ -1665,8 +2423,7 @@ function ReadyOverlay({ inspectionEnabled }: { inspectionEnabled: boolean }) {
       transition={{ duration: 0.24 }}
     >
       <span>READY</span>
-      <strong>{inspectionEnabled ? "Press Space to Inspect" : "Press First Move to Start"}</strong>
-      {inspectionEnabled ? <small>or press first move to start</small> : null}
+      <strong>{message}</strong>
     </motion.div>
   );
 }
@@ -1761,13 +2518,13 @@ function ResultsModal({
   solve: SolveRecord | null;
   raceResult: RaceResult | null;
   isPersonalBest: boolean;
-  mode: "practice" | "bot-race" | "ranked";
+  mode: GameMode;
   onPracticeAgain: () => void;
   onNewScramble: () => void;
   onHome: () => void;
   onReplay: () => void;
 }) {
-  const isRace = (mode === "bot-race" || mode === "ranked") && raceResult;
+  const isRace = (mode === "bot-race" || mode === "ranked" || mode === "private") && raceResult;
   const isRankedRace = mode === "ranked" && raceResult;
 
   return (
@@ -1857,8 +2614,17 @@ function ResultsModal({
             New Scramble
           </button> : null}
           <button type="button" onClick={onHome}>
-            <HomeIcon size={16} aria-hidden="true" />
-            Back to Home
+            {mode === "private" ? (
+              <>
+                <Gamepad2 size={16} aria-hidden="true" />
+                Exit to Lobby
+              </>
+            ) : (
+              <>
+                <HomeIcon size={16} aria-hidden="true" />
+                Back to Home
+              </>
+            )}
           </button>
           <button type="button" disabled onClick={onReplay}>
             <Play size={16} aria-hidden="true" />
@@ -1877,7 +2643,7 @@ function PauseMenu({
   onSettings,
   onHome,
 }: {
-  mode: "practice" | "bot-race" | "ranked";
+  mode: GameMode;
   onResume: () => void;
   onRestart: () => void;
   onSettings: () => void;
@@ -1906,15 +2672,24 @@ function PauseMenu({
           </button>
           <button type="button" onClick={onRestart}>
             <RotateCcw size={16} aria-hidden="true" />
-            Restart Solve
+            Reset Cube
           </button>
           <button type="button" onClick={onSettings}>
             <Settings size={16} aria-hidden="true" />
             Settings
           </button>
           <button type="button" onClick={onHome}>
-            <HomeIcon size={16} aria-hidden="true" />
-            Return Home
+            {mode === "private" ? (
+              <>
+                <Gamepad2 size={16} aria-hidden="true" />
+                Exit to Lobby
+              </>
+            ) : (
+              <>
+                <HomeIcon size={16} aria-hidden="true" />
+                Return Home
+              </>
+            )}
           </button>
         </div>
       </motion.section>
@@ -1929,6 +2704,7 @@ function PracticeSettingsPopover({
   showScramble,
   copyLabel,
   turnMode,
+  allowReset,
   onClose,
   onGenerate,
   onReset,
@@ -1939,13 +2715,15 @@ function PracticeSettingsPopover({
   onToggleScramble,
   onSettings,
   onTurnMode,
+  onOpenRebinds,
 }: {
-  mode: "practice" | "bot-race" | "ranked";
+  mode: GameMode;
   settings: SessionSettings;
   scramble: string[];
   showScramble: boolean;
   copyLabel: string;
   turnMode: TurnMode;
+  allowReset: boolean;
   onClose: () => void;
   onGenerate: () => void;
   onReset: () => void;
@@ -1956,6 +2734,7 @@ function PracticeSettingsPopover({
   onToggleScramble: () => void;
   onSettings: (settings: Partial<SessionSettings>) => void;
   onTurnMode: (mode: TurnMode) => void;
+  onOpenRebinds: () => void;
 }) {
   const isRace = mode === "bot-race";
 
@@ -1979,7 +2758,6 @@ function PracticeSettingsPopover({
 
       <div className="popover-actions">
         <button type="button" onClick={onGenerate}><RefreshCcw size={16} />Generate New Scramble</button>
-        <button type="button" onClick={onReset}><RotateCcw size={16} />{isRace ? "Restart Race" : "Reset Cube"}</button>
         {!isRace ? (
           <>
             <button type="button" onClick={onUndo}><StepBack size={16} />Undo</button>
@@ -2008,14 +2786,15 @@ function PracticeSettingsPopover({
       </AnimatePresence>
 
       <div className="setting-block">
-        <label className="switch-row compact">
-          <span>Inspection</span>
-          <input
-            type="checkbox"
-            checked={settings.inspectionEnabled}
-            onChange={(event) => onSettings({ inspectionEnabled: event.target.checked })}
-          />
-        </label>
+        <button 
+          type="button" 
+          className="danger-button compact" 
+          onClick={onReset}
+          disabled={!allowReset}
+        >
+          <RotateCcw size={16} aria-hidden="true" />
+          Reset Cube
+        </button>
         <label className="switch-row compact">
           <span>Keyboard Cheat Sheet</span>
           <input
@@ -2069,12 +2848,15 @@ function PracticeSettingsPopover({
         ))}
       </div>
 
-      <div className="keyboard-rebinds">
-        <div>
-          <Keyboard size={16} />
-          Keyboard Rebinds
-        </div>
-        <span>Coming Soon</span>
+      <div className="keyboard-rebinds-popover-row">
+        <button
+          type="button"
+          className="rebinds-redirect-btn"
+          onClick={onOpenRebinds}
+        >
+          <Keyboard size={15} />
+          <span>Configure Keybindings</span>
+        </button>
       </div>
     </motion.aside>
   );
@@ -2094,6 +2876,34 @@ function AppSettingsDialog({
   onSettings: (settings: Partial<SessionSettings>) => void;
 }) {
   const categories: SettingsCategory[] = ["General", "Appearance", "Controls", "Cube", "Graphics", "Audio", "Accessibility"];
+  const [listeningFace, setListeningFace] = useState<Face | null>(null);
+
+  useEffect(() => {
+    if (!listeningFace) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.key === "Escape") {
+        setListeningFace(null);
+        return;
+      }
+
+      const key = event.key.toUpperCase();
+      const currentBindings = settings.keybindings || DEFAULT_SETTINGS.keybindings;
+      const updatedBindings = {
+        ...currentBindings,
+        [listeningFace]: key,
+      };
+
+      onSettings({ keybindings: updatedBindings });
+      setListeningFace(null);
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [listeningFace, onSettings, settings.keybindings]);
 
   return (
     <motion.div
@@ -2135,22 +2945,24 @@ function AppSettingsDialog({
           <div className="settings-content">
             <h3>{category}</h3>
             {category === "Appearance" ? (
-              <div className="segmented-control">
+              <div className="theme-toggle-container">
                 <button
-                  type="button"
-                  className={settings.theme === "dark" ? "selected" : ""}
-                  onClick={() => onSettings({ theme: "dark" })}
+                  className={`premium-theme-toggle ${settings.theme === "dark" ? "is-dark" : "is-light"}`}
+                  onClick={() => onSettings({ theme: settings.theme === "dark" ? "light" : "dark" })}
+                  aria-label="Toggle theme"
                 >
-                  <Moon size={15} />
-                  Dark
-                </button>
-                <button
-                  type="button"
-                  className={settings.theme === "light" ? "selected" : ""}
-                  onClick={() => onSettings({ theme: "light" })}
-                >
-                  <Sun size={15} />
-                  Light
+                  <motion.div
+                    className="theme-toggle-orb"
+                    layout
+                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                  >
+                    {settings.theme === "dark" ? (
+                      <Moon size={14} className="theme-icon-dark" />
+                    ) : (
+                      <Sun size={14} className="theme-icon-light" />
+                    )}
+                  </motion.div>
+                  <div className="theme-toggle-bg" />
                 </button>
               </div>
             ) : category === "Cube" || category === "Graphics" ? (
@@ -2175,12 +2987,43 @@ function AppSettingsDialog({
                     onChange={(event) => onSettings({ showKeyboardCheatSheet: event.target.checked })}
                   />
                 </label>
-                <div className="keyboard-rebinds spacious">
-                  <div>
+                <div className="keyboard-rebinds-section">
+                  <div className="section-title">
                     <Keyboard size={16} />
-                    Keyboard Rebinds
+                    <h4>Keyboard Rebinds</h4>
                   </div>
-                  <span>Coming Soon</span>
+                  <div className="rebinds-grid">
+                    {(["U", "R", "F", "D", "L", "B"] as Face[]).map((face) => {
+                      const label = {
+                        U: "Up (U)",
+                        R: "Right (R)",
+                        F: "Front (F)",
+                        D: "Down (D)",
+                        L: "Left (L)",
+                        B: "Back (B)",
+                      }[face];
+                      const boundKey = (settings.keybindings || DEFAULT_SETTINGS.keybindings)[face];
+                      const isListening = listeningFace === face;
+
+                      return (
+                        <div key={face} className="rebind-row">
+                          <span>{label}</span>
+                          <button
+                            type="button"
+                            className={`rebind-key-btn ${isListening ? "listening" : ""}`}
+                            onClick={() => setListeningFace(face)}
+                          >
+                            {isListening ? "Press key..." : boundKey}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {listeningFace && (
+                    <div className="rebind-tip">
+                      Press any key to bind, or ESC to cancel
+                    </div>
+                  )}
                 </div>
               </>
             ) : (
@@ -2195,38 +3038,367 @@ function AppSettingsDialog({
   );
 }
 
-function KeyboardCheatSheet() {
-  const rows: Array<[Face, string]> = [
-    ["R", "Right"],
-    ["L", "Left"],
-    ["U", "Up"],
-    ["D", "Down"],
-    ["F", "Front"],
-    ["B", "Back"],
+function AuthDialog({
+  mode,
+  error,
+  onClose,
+  onMode,
+  onGuest,
+  onLogin,
+  onRegister,
+  onOAuth,
+}: {
+  mode: "login" | "register";
+  error: string | null;
+  onClose: () => void;
+  onMode: (mode: AuthModal) => void;
+  onGuest: () => void;
+  onLogin: (input: { email: string; password: string; rememberMe: boolean }) => Promise<void>;
+  onRegister: (input: { username: string; email: string; password: string; rememberMe: boolean }) => Promise<void>;
+  onOAuth: (provider: "google" | "github" | "discord") => void;
+}) {
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const isRegister = mode === "register";
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusy(true);
+
+    try {
+      if (isRegister) {
+        await onRegister({ username, email, password, rememberMe });
+      } else {
+        await onLogin({ email, password, rememberMe });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.form
+        className="auth-dialog"
+        onSubmit={submit}
+        initial={{ y: 24, opacity: 0, scale: 0.97 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        exit={{ y: 24, opacity: 0, scale: 0.97 }}
+        transition={{ type: "spring", stiffness: 170, damping: 20 }}
+      >
+        <div className="modal-head">
+          <div>
+            <span>Account</span>
+            <h2>{isRegister ? "Create Account" : "Login"}</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close account dialog">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="auth-fields">
+          {isRegister ? (
+            <label>
+              <span>Username</span>
+              <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required minLength={3} />
+            </label>
+          ) : null}
+          <label>
+            <span>Email</span>
+            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={isRegister ? "new-password" : "current-password"} required minLength={isRegister ? 8 : 1} />
+          </label>
+          <label className="switch-row compact">
+            <span>Remember Me</span>
+            <input type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} />
+          </label>
+        </div>
+
+        {error ? <div className="auth-error">{error}</div> : null}
+
+        <button type="submit" className="auth-submit" disabled={busy}>
+          {isRegister ? <UserPlus size={16} aria-hidden="true" /> : <LogIn size={16} aria-hidden="true" />}
+          {busy ? "Working..." : isRegister ? "Register" : "Login"}
+        </button>
+
+        <div className="oauth-row">
+          <button type="button" onClick={() => onOAuth("google")}>Google</button>
+          <button type="button" onClick={() => onOAuth("github")}>GitHub</button>
+          <button type="button" onClick={() => onOAuth("discord")}>Discord</button>
+        </div>
+
+        <div className="auth-switch">
+          <button type="button" onClick={() => onMode(isRegister ? "login" : "register")}>
+            {isRegister ? "Already have an account?" : "Need an account?"}
+          </button>
+          <button type="button" onClick={onGuest}>Continue as Guest</button>
+        </div>
+      </motion.form>
+    </motion.div>
+  );
+}
+
+function ProfileDialog({
+  user,
+  onClose,
+  onSave,
+  onLogout,
+}: {
+  user: UserProfile;
+  onClose: () => void;
+  onSave: (patch: Partial<Pick<UserProfile, "username" | "avatar" | "country" | "bio" | "theme" | "favoriteMode">>) => Promise<void>;
+  onLogout: () => void;
+}) {
+  const [draft, setDraft] = useState({
+    username: user.username,
+    avatar: user.avatar ?? "",
+    country: user.country ?? "",
+    bio: user.bio,
+    theme: user.theme,
+    favoriteMode: user.favoriteMode,
+  });
+  const [privateHistory, setPrivateHistory] = useState<any[]>([]);
+
+  useEffect(() => {
+    try {
+      const hist = JSON.parse(localStorage.getItem("cuberanked.private_history") || "[]");
+      setPrivateHistory(hist);
+    } catch {
+      // ignore
+    }
+  }, []);
+  const originalKey = JSON.stringify({
+    username: user.username,
+    avatar: user.avatar ?? "",
+    country: user.country ?? "",
+    bio: user.bio,
+    theme: user.theme,
+    favoriteMode: user.favoriteMode,
+  });
+  const draftKey = JSON.stringify(draft);
+
+  useEffect(() => {
+    if (draftKey === originalKey) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void onSave({
+        ...draft,
+        avatar: draft.avatar.trim() || null,
+        country: draft.country.trim() || null,
+      });
+    }, 700);
+
+    return () => window.clearTimeout(timeout);
+  }, [draft, draftKey, onSave, originalKey]);
+
+  return (
+    <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.section
+        className="profile-dialog"
+        initial={{ y: 24, opacity: 0, scale: 0.97 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        exit={{ y: 24, opacity: 0, scale: 0.97 }}
+        transition={{ type: "spring", stiffness: 170, damping: 20 }}
+      >
+        <div className="modal-head">
+          <div>
+            <span>Profile</span>
+            <h2>{user.username}</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close profile">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="profile-summary">
+          <div className="profile-avatar">{user.avatar ? <img src={user.avatar} alt="" /> : user.username.slice(0, 2).toUpperCase()}</div>
+          <div>
+            <strong>{user.status === "online" ? "Online" : "Offline"}</strong>
+            <span>Joined {new Date(user.joinDate).toLocaleDateString()}</span>
+          </div>
+        </div>
+
+        <div className="profile-stats">
+          <div><span>Games</span><strong>{user.gamesPlayed}</strong></div>
+          <div><span>Wins</span><strong>{user.wins}</strong></div>
+          <div><span>Losses</span><strong>{user.losses}</strong></div>
+          <div><span>Best</span><strong>{formatTime(user.bestTimeMs)}</strong></div>
+        </div>
+
+        <div className="auth-fields">
+          <label>
+            <span>Username</span>
+            <input value={draft.username} onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))} />
+          </label>
+          <label>
+            <span>Avatar URL</span>
+            <input value={draft.avatar} onChange={(event) => setDraft((current) => ({ ...current, avatar: event.target.value }))} />
+          </label>
+          <label>
+            <span>Country</span>
+            <input value={draft.country} onChange={(event) => setDraft((current) => ({ ...current, country: event.target.value }))} />
+          </label>
+          <label>
+            <span>Favorite Mode</span>
+            <input value={draft.favoriteMode} onChange={(event) => setDraft((current) => ({ ...current, favoriteMode: event.target.value }))} />
+          </label>
+          <label>
+            <span>Bio</span>
+            <textarea value={draft.bio} onChange={(event) => setDraft((current) => ({ ...current, bio: event.target.value }))} maxLength={220} />
+          </label>
+        </div>
+
+        <div className="profile-private-history">
+          <h3>Private Match History</h3>
+          {privateHistory.length === 0 ? (
+            <p className="no-history-text">No private matches played yet.</p>
+          ) : (
+            <div className="history-list">
+              {privateHistory.map((item: any) => (
+                <div key={item.id} className="history-item">
+                  <div className="history-meta">
+                    <strong>vs {item.opponent}</strong>
+                    <span>{new Date(item.date).toLocaleDateString()}</span>
+                  </div>
+                  <div className="history-stats">
+                    <span className="time-badge">{item.timeMs ? formatTime(item.timeMs) : "DNF"}</span>
+                    <span className={`winner-badge ${item.winner === "You" ? "win" : "loss"}`}>
+                      {item.winner === "You" ? "WON" : "LOST"}
+                    </span>
+                    <small className="replay-tag">{item.replayId}</small>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="theme-toggle-container">
+          <button
+            className={`premium-theme-toggle ${draft.theme === "dark" ? "is-dark" : "is-light"}`}
+            onClick={() => setDraft((current) => ({ ...current, theme: current.theme === "dark" ? "light" : "dark" }))}
+            aria-label="Toggle theme"
+          >
+            <motion.div
+              className="theme-toggle-orb"
+              layout
+              transition={{ type: "spring", stiffness: 500, damping: 30 }}
+            >
+              {draft.theme === "dark" ? (
+                <Moon size={14} className="theme-icon-dark" />
+              ) : (
+                <Sun size={14} className="theme-icon-light" />
+              )}
+            </motion.div>
+            <div className="theme-toggle-bg" />
+          </button>
+        </div>
+
+        <button type="button" className="profile-logout" onClick={onLogout}>
+          <LogOut size={16} aria-hidden="true" />
+          Logout
+        </button>
+      </motion.section>
+    </motion.div>
+  );
+}
+
+function KeyboardCheatSheet({ settings }: { settings: SessionSettings }) {
+  const bindings = settings.keybindings || DEFAULT_SETTINGS.keybindings;
+
+  const moveRows: Array<{ key: string; shift?: string; label: string }> = [
+    { key: bindings.R || "R", shift: `Shift+${bindings.R || "R"}`, label: "Right" },
+    { key: bindings.L || "L", shift: `Shift+${bindings.L || "L"}`, label: "Left" },
+    { key: bindings.U || "U", shift: `Shift+${bindings.U || "U"}`, label: "Up" },
+    { key: bindings.D || "D", shift: `Shift+${bindings.D || "D"}`, label: "Down" },
+    { key: bindings.F || "F", shift: `Shift+${bindings.F || "F"}`, label: "Front" },
+    { key: bindings.B || "B", shift: `Shift+${bindings.B || "B"}`, label: "Back" },
+  ];
+
+  const cameraRows = [
+    { key: "Mouse Drag", label: "Rotate View" },
+    { key: "Scroll", label: "Zoom" },
+  ];
+
+  const actionRows = [
+    { key: "Space", label: "Inspect / Start" },
+    { key: "Esc", label: "Pause" },
   ];
 
   return (
     <motion.aside
-      className="keyboard-cheat-sheet"
-      initial={{ x: -16, opacity: 0 }}
+      className="kbd-panel"
+      initial={{ x: -20, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
-      exit={{ x: -16, opacity: 0 }}
-      transition={{ type: "spring", stiffness: 180, damping: 22 }}
+      exit={{ x: -20, opacity: 0 }}
+      transition={{ type: "spring", stiffness: 240, damping: 26 }}
     >
-      <div>
-        <Keyboard size={14} aria-hidden="true" />
-        Controls
+      <div className="kbd-panel-header">
+        <Keyboard size={13} aria-hidden="true" />
+        <span>Controls</span>
       </div>
-      {rows.map(([face, label]) => (
-        <span key={face}>
-          <kbd>{face}</kbd>
-          <strong>{label}</strong>
-          <kbd>Shift+{face}</kbd>
-          <strong>{label}'</strong>
-        </span>
-      ))}
+
+      <div className="kbd-section">
+        <div className="kbd-section-label">Moves</div>
+        {moveRows.map((row) => (
+          <div key={row.key} className="kbd-row">
+            <div className="kbd-keys">
+              <kbd className="kbd-key">{row.key}</kbd>
+              {row.shift && <kbd className="kbd-key modifier">{row.shift}</kbd>}
+            </div>
+            <span className="kbd-label">{row.label}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="kbd-section">
+        <div className="kbd-section-label">Camera</div>
+        {cameraRows.map((row) => (
+          <div key={row.key} className="kbd-row">
+            <div className="kbd-keys">
+              <kbd className="kbd-key">{row.key}</kbd>
+            </div>
+            <span className="kbd-label">{row.label}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="kbd-section">
+        <div className="kbd-section-label">Actions</div>
+        {actionRows.map((row) => (
+          <div key={row.key} className="kbd-row">
+            <div className="kbd-keys">
+              <kbd className="kbd-key">{row.key}</kbd>
+            </div>
+            <span className="kbd-label">{row.label}</span>
+          </div>
+        ))}
+      </div>
     </motion.aside>
   );
+}
+
+function buildCloudStatistics(history: SolveRecord[], botStats: BotRaceStats): UserStatistics {
+  const stats = calculateStats(history);
+
+  return {
+    gamesPlayed: history.length + botStats.wins + botStats.losses,
+    wins: botStats.wins,
+    losses: botStats.losses,
+    botWins: botStats.wins,
+    botLosses: botStats.losses,
+    bestTimeMs: stats.bestSolve?.finalTimeMs ?? null,
+    averageTimeMs: stats.sessionAverageMs,
+    practiceHistory: history.slice(0, 120),
+  };
 }
 
 function stateLabel(stage: PlayableStage): string {
