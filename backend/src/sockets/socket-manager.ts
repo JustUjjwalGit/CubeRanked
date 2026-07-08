@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { buildCorsOrigins } from "../config/cors.js";
 import { validateSolve } from "../cube/cube-validator.js";
 import { UserStore } from "../users/user-store.js";
+import { Glicko2 } from "glicko2.ts";
 
 const SHARED_TEST_ROOM_ID = "shared-test-room";
 const MATCH_ROOM_PREFIX = "match:";
@@ -367,7 +368,7 @@ export function createSocketManager(app: FastifyInstance) {
     }, COUNTDOWN_MS);
   }
 
-  function finishMatchIfReady(match: MatchState) {
+  async function finishMatchIfReady(match: MatchState) {
     if (match.status === "finished") {
       return;
     }
@@ -390,6 +391,61 @@ export function createSocketManager(app: FastifyInstance) {
       ? Math.abs(winner.finalTimeMs - loser.finalTimeMs)
       : null;
 
+    let ratingUpdates: any[] = [];
+    if (!match.roomCode && match.players.length === 2 && winner && loser) {
+      const p1 = match.players[0];
+      const p2 = match.players[1];
+      if (p1.userId && p2.userId) {
+        const user1 = await store.findUserById(p1.userId);
+        const user2 = await store.findUserById(p2.userId);
+
+        if (user1 && user2) {
+          const glicko = new Glicko2({ tau: 0.5, rating: 1500, rd: 350, vol: 0.06 });
+          const g1 = user1.glicko || { rating: 1500, rd: 350, vol: 0.06 };
+          const g2 = user2.glicko || { rating: 1500, rd: 350, vol: 0.06 };
+          const player1 = glicko.makePlayer(g1.rating, g1.rd, g1.vol);
+          const player2 = glicko.makePlayer(g2.rating, g2.rd, g2.vol);
+
+          const outcome = winner.clientId === p1.clientId ? 1 : (loser.clientId === p1.clientId ? 0 : 0.5);
+          glicko.updateRatings([[player1, player2, outcome]]);
+
+          const newG1 = { rating: player1.getRating(), rd: player1.getRd(), vol: player1.getVol() };
+          const newG2 = { rating: player2.getRating(), rd: player2.getRd(), vol: player2.getVol() };
+
+          const p1Placement = (user1.placementMatchesPlayed || 0) + 1;
+          const p2Placement = (user2.placementMatchesPlayed || 0) + 1;
+
+          await store.updateUser(user1.id, { 
+            glicko: newG1, 
+            rating: Math.round(newG1.rating), 
+            placementMatchesPlayed: p1Placement 
+          });
+          await store.updateUser(user2.id, { 
+            glicko: newG2, 
+            rating: Math.round(newG2.rating), 
+            placementMatchesPlayed: p2Placement 
+          });
+
+          ratingUpdates = [
+            {
+              clientId: p1.clientId,
+              previousRating: Math.round(g1.rating),
+              newRating: Math.round(newG1.rating),
+              isPlacement: p1Placement <= 5,
+              placementMatchesPlayed: p1Placement,
+            },
+            {
+              clientId: p2.clientId,
+              previousRating: Math.round(g2.rating),
+              newRating: Math.round(newG2.rating),
+              isPlacement: p2Placement <= 5,
+              placementMatchesPlayed: p2Placement,
+            }
+          ];
+        }
+      }
+    }
+
     namespace.to(match.roomId).emit("match:results", {
       matchId: match.id,
       scrambleId: match.scrambleId,
@@ -399,6 +455,7 @@ export function createSocketManager(app: FastifyInstance) {
       timeDifferenceMs,
       players: match.players.map(publicPlayer),
       serverNow: Date.now(),
+      ratingUpdates: ratingUpdates.length > 0 ? ratingUpdates : undefined,
     });
 
     if (match.roomCode) {
@@ -465,7 +522,7 @@ export function createSocketManager(app: FastifyInstance) {
       }
     }
 
-    finishMatchIfReady(match);
+    void finishMatchIfReady(match);
   }
 
   const rooms = new Map<string, RoomState>();
@@ -781,7 +838,7 @@ export function createSocketManager(app: FastifyInstance) {
       player.finalTimeMs = elapsedMs;
       player.tps = player.moveCount / Math.max(player.finalTimeMs / 1_000, 0.001);
       emitMatchState(match);
-      finishMatchIfReady(match);
+      void finishMatchIfReady(match);
     });
 
     socket.on("match:play-again", (payload: { matchId: string }) => {

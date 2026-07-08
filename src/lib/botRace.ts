@@ -152,7 +152,7 @@ export function createBotOpponent(scramble: string[]): BotOpponent {
   const projectedTimeMs = Math.ceil((plan.at(-1)?.atMs ?? 0) + profile.turnDuration * 1_000);
 
   return {
-    id: crypto.randomUUID(),
+    id: crypto.randomUUID() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     source: "bot",
     name,
     avatar: createAvatar(name),

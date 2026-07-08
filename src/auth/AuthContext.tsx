@@ -47,6 +47,7 @@ interface AuthContextValue {
   register: (input: { username: string; email: string; password: string; rememberMe: boolean }) => Promise<void>;
   continueAsGuest: () => void;
   logout: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
   updateProfile: (patch: Partial<Pick<UserProfile, "username" | "avatar" | "country" | "bio" | "theme" | "favoriteMode">>) => Promise<void>;
   syncSettings: (settings: SessionSettings) => Promise<void>;
   syncStatistics: (statistics: UserStatistics) => Promise<void>;
@@ -149,6 +150,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setMode("guest");
   }, []);
 
+  const refreshProfile = useCallback(async () => {
+    if (mode !== "authenticated") return;
+    try {
+      const profile = await fetchProfile();
+      setUser(profile);
+    } catch (e) {
+      console.error("Failed to refresh profile", e);
+    }
+  }, [mode]);
+
   const updateProfile = useCallback(async (patch: Partial<Pick<UserProfile, "username" | "avatar" | "country" | "bio" | "theme" | "favoriteMode">>) => {
     if (mode !== "authenticated") return;
     setError(null);
@@ -231,6 +242,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     register,
     continueAsGuest,
     logout,
+    refreshProfile,
     updateProfile,
     syncSettings,
     syncStatistics,
@@ -248,6 +260,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     register,
     continueAsGuest,
     logout,
+    refreshProfile,
     updateProfile,
     syncSettings,
     syncStatistics,

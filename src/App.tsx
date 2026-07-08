@@ -31,12 +31,15 @@ import {
   Award,
   Zap,
   Globe,
+  GraduationCap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import CubeScene from "./components/cube/CubeScene";
+import LearnMode from "./components/LearnMode";
 import AppBackground from "./components/AppBackground";
 import IdentityScreen from "./components/IdentityScreen";
 import RankedGateModal from "./components/RankedGateModal";
+import RankPromotionAnimation from "./components/RankPromotionAnimation";
 import SocialSidebar from "./components/SocialSidebar";
 import { makeMove, MOVE_FACES, parseMove, type Face } from "./lib/cubeEngine";
 import { useBackendHealth } from "./hooks/useBackendHealth";
@@ -62,6 +65,7 @@ import {
   type SessionSettings,
   type SolveRecord,
 } from "./lib/sessionStats";
+import { getRankFromRating } from "./lib/ranks";
 import { saveReplay, getLocalReplays } from "./lib/replay";
 import { calculateLifetimeStats } from "./lib/statsEngine";
 import {
@@ -110,7 +114,7 @@ const playModes = [
 ] as const;
 
 type PlayableStage = Extract<GameStage, "COUNTDOWN" | "READY" | "INSPECTION" | "PLAYING" | "SOLVED" | "RESULT">;
-type SettingsCategory = "General" | "Appearance" | "Controls" | "Cube" | "Graphics" | "Audio" | "Accessibility";
+type SettingsCategory = "General" | "Appearance" | "Camera" | "Controls" | "Cube" | "Graphics" | "Audio" | "Accessibility";
 type AuthModal = "none" | "login" | "register" | "profile";
 
 interface BotRaceStats {
@@ -140,6 +144,7 @@ interface OnlineRaceResult {
   winnerClientId: string | null;
   loserClientId: string | null;
   timeDifferenceMs: number | null;
+  ratingUpdates?: import("./network/socketTypes").RatingUpdate[];
 }
 
 export default function App() {
@@ -192,6 +197,7 @@ export default function App() {
   const [onlineResult, setOnlineResult] = useState<OnlineRaceResult | null>(null);
   const [authModal, setAuthModal] = useState<AuthModal>("none");
   const [rankedGateOpen, setRankedGateOpen] = useState(false);
+  const [promotionData, setPromotionData] = useState<{ rank: import("./lib/ranks").RankInfo, isPromotion: boolean } | null>(null);
   const solveStartRef = useRef(0);
   const inspectionStartRef = useRef(0);
   const pausedAtRef = useRef<number | null>(null);
@@ -1038,6 +1044,7 @@ export default function App() {
         winnerClientId: payload.winnerClientId,
         loserClientId: payload.loserClientId,
         timeDifferenceMs: payload.timeDifferenceMs,
+        ratingUpdates: payload.ratingUpdates,
       };
 
       if (gameMode === "private" && you && opponent) {
@@ -1079,6 +1086,27 @@ export default function App() {
       setOnlineResult(result);
       setRaceResult(resultToRaceResult(result));
       setElapsedMs(you?.finalTimeMs ?? elapsedMs);
+
+      // Refresh profile to update Glicko stats in UI
+      if (auth.mode === "authenticated") {
+        void auth.refreshProfile();
+      }
+
+      // Check for promotion/demotion
+      if (you && result.ratingUpdates) {
+        const myUpdate = result.ratingUpdates.find(u => u.clientId === you.clientId);
+        if (myUpdate && !myUpdate.isPlacement) {
+          const prevRank = getRankFromRating(myUpdate.previousRating, false);
+          const newRank = getRankFromRating(myUpdate.newRating, false);
+          
+          if (prevRank.tier !== newRank.tier && myUpdate.newRating > myUpdate.previousRating) {
+            setPromotionData({ rank: newRank, isPromotion: true });
+          } else if (prevRank.tier !== newRank.tier && myUpdate.newRating < myUpdate.previousRating) {
+            setPromotionData({ rank: newRank, isPromotion: false });
+          }
+        }
+      }
+
       dispatch({ type: "SOLVE_COMPLETE" });
     });
 
@@ -1486,7 +1514,17 @@ export default function App() {
               onBotRace={() => dispatch({ type: "SELECT_BOT_RACE" })}
               onRanked={enterRankedQueue}
               onPrivate={() => dispatch({ type: "SELECT_PRIVATE" })}
+              onLearn={() => dispatch({ type: "SELECT_LEARN" })}
               socketSnapshot={socketSnapshot}
+            />
+          ) : stage === "LEARN" ? (
+            <LearnMode
+              key="learn"
+              onBack={returnHome}
+              theme={settings.theme}
+              cameraSensitivity={settings.cameraSensitivity}
+              cameraZoomSpeed={settings.cameraZoomSpeed}
+              cameraInvertVertical={settings.cameraInvertVertical}
             />
           ) : stage === "MATCHMAKING" ? (
             <QueueScreen
@@ -1596,16 +1634,27 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {stage === "RESULT" ? (
+        {stage === "RESULT" && !promotionData ? (
           <ResultsModal
             solve={lastSolve}
             raceResult={raceResult}
+            onlineResult={onlineResult}
             isPersonalBest={lastSolveIsPersonalBest}
             mode={gameMode ?? "practice"}
             onPracticeAgain={practiceAgain}
             onNewScramble={requestNewScramble}
             onHome={returnHome}
             onReplay={showReplayNotice}
+          />
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {promotionData ? (
+          <RankPromotionAnimation
+            rank={promotionData.rank}
+            isPromotion={promotionData.isPromotion}
+            onComplete={() => setPromotionData(null)}
           />
         ) : null}
       </AnimatePresence>
@@ -1816,6 +1865,7 @@ function HomeScreen({
   onBotRace,
   onRanked,
   onPrivate,
+  onLearn,
   socketSnapshot,
 }: {
   connectionState: SocketConnectionState;
@@ -1832,6 +1882,7 @@ function HomeScreen({
   onBotRace: () => void;
   onRanked: () => void;
   onPrivate: () => void;
+  onLearn: () => void;
   socketSnapshot: SocketDebugSnapshot;
 }) {
   const [socialOpen, setSocialOpen] = useState(false);
@@ -2013,6 +2064,20 @@ function HomeScreen({
             </div>
             <div className="mode-card-status select-text">
               Join Room
+            </div>
+          </button>
+
+          <button type="button" className="lobby-mode-card learn-featured-card" onClick={onLearn} style={{ gridColumn: "span 2" }}>
+            <div className="mode-card-icon-wrap icon-learn">
+              <GraduationCap size={28} />
+            </div>
+            <div className="mode-card-info">
+              <div className="featured-badge">Academy</div>
+              <h3>Learn</h3>
+              <p>Master Rubik's Cube notation and interactive beginner-to-advanced lessons</p>
+            </div>
+            <div className="mode-card-status select-text">
+              Enter Academy
             </div>
           </button>
         </div>
@@ -2639,7 +2704,13 @@ function PracticeScreen({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.28 }}
     >
-      <CubeScene theme={settings.theme} />
+      <CubeScene 
+        theme={settings.theme}
+        cameraMode={settings.cameraMode}
+        cameraInvertVertical={settings.cameraInvertVertical}
+        cameraSensitivity={settings.cameraSensitivity}
+        cameraZoomSpeed={settings.cameraZoomSpeed}
+      />
 
       <div className="match-frame">
         {!showFocusOnly ? (
@@ -2966,6 +3037,7 @@ function CompactTimer({
 function ResultsModal({
   solve,
   raceResult,
+  onlineResult,
   isPersonalBest,
   mode,
   onPracticeAgain,
@@ -2975,6 +3047,7 @@ function ResultsModal({
 }: {
   solve: SolveRecord | null;
   raceResult: RaceResult | null;
+  onlineResult?: OnlineRaceResult | null;
   isPersonalBest: boolean;
   mode: GameMode;
   onPracticeAgain: () => void;
@@ -3013,6 +3086,36 @@ function ResultsModal({
           <div className="personal-best">
             <Trophy size={16} aria-hidden="true" />
             Personal Best
+          </div>
+        ) : null}
+
+        {isRankedRace && onlineResult?.ratingUpdates ? (
+          <div className="rating-updates-container">
+            {onlineResult.ratingUpdates.filter(u => u.clientId === onlineResult.you?.clientId).map(update => {
+              const diff = update.newRating - update.previousRating;
+              const rank = getRankFromRating(update.newRating, update.isPlacement);
+              return (
+                <div key={update.clientId} className="rating-update-card">
+                  <div className="rank-badge" style={{ borderColor: rank.color, color: rank.color }}>
+                    {rank.badge}
+                  </div>
+                  <div className="rating-details">
+                    <span className="tier-name" style={{ color: rank.color }}>{rank.tier}</span>
+                    <div className="rating-numbers">
+                      <span className="current-rating">{update.isPlacement ? "Unranked" : update.newRating}</span>
+                      {!update.isPlacement && diff !== 0 && (
+                        <span className={diff > 0 ? "rating-diff positive" : "rating-diff negative"}>
+                          {diff > 0 ? `+${diff}` : diff}
+                        </span>
+                      )}
+                    </div>
+                    {update.isPlacement && (
+                      <div className="placement-progress">Placement: {update.placementMatchesPlayed}/5</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ) : null}
 
@@ -3333,7 +3436,7 @@ function AppSettingsDialog({
   onClose: () => void;
   onSettings: (settings: Partial<SessionSettings>) => void;
 }) {
-  const categories: SettingsCategory[] = ["General", "Appearance", "Controls", "Cube", "Graphics", "Audio", "Accessibility"];
+  const categories: SettingsCategory[] = ["General", "Appearance", "Camera", "Controls", "Cube", "Graphics", "Audio", "Accessibility"];
   const [listeningFace, setListeningFace] = useState<Face | null>(null);
 
   useEffect(() => {
@@ -3484,6 +3587,88 @@ function AppSettingsDialog({
                   )}
                 </div>
               </>
+            ) : category === "Camera" ? (
+              <div className="camera-settings-section" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <span style={{ fontSize: "0.85rem", color: "#94a3b8", fontWeight: 600 }}>Camera Mode</span>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                    <button
+                      type="button"
+                      className={`mode-tab-btn ${settings.cameraMode === "competitive" ? "selected" : ""}`}
+                      onClick={() => onSettings({ cameraMode: "competitive" })}
+                      style={{
+                        padding: "10px",
+                        borderRadius: "8px",
+                        background: settings.cameraMode === "competitive" ? "rgba(99, 102, 241, 0.2)" : "rgba(255, 255, 255, 0.03)",
+                        border: settings.cameraMode === "competitive" ? "1px solid #6366f1" : "1px solid rgba(255, 255, 255, 0.08)",
+                        color: settings.cameraMode === "competitive" ? "#e0e7ff" : "#94a3b8",
+                        cursor: "pointer",
+                        fontWeight: 700,
+                        fontSize: "0.85rem",
+                        transition: "all 150ms ease"
+                      }}
+                    >
+                      Competitive
+                    </button>
+                    <button
+                      type="button"
+                      className={`mode-tab-btn ${settings.cameraMode === "free-orbit" ? "selected" : ""}`}
+                      onClick={() => onSettings({ cameraMode: "free-orbit" })}
+                      style={{
+                        padding: "10px",
+                        borderRadius: "8px",
+                        background: settings.cameraMode === "free-orbit" ? "rgba(99, 102, 241, 0.2)" : "rgba(255, 255, 255, 0.03)",
+                        border: settings.cameraMode === "free-orbit" ? "1px solid #6366f1" : "1px solid rgba(255, 255, 255, 0.08)",
+                        color: settings.cameraMode === "free-orbit" ? "#e0e7ff" : "#94a3b8",
+                        cursor: "pointer",
+                        fontWeight: 700,
+                        fontSize: "0.85rem",
+                        transition: "all 150ms ease"
+                      }}
+                    >
+                      Free Orbit
+                    </button>
+                  </div>
+                  <small style={{ color: "#64748b", fontSize: "0.75rem", marginTop: "4px" }}>
+                    {settings.cameraMode === "competitive" 
+                      ? "Competitive Mode uses a fixed, optimized view angle for standard plays." 
+                      : "Free Orbit Mode allows unrestricted rotation and zoom to inspect the cube from any angle."}
+                  </small>
+                </div>
+
+                <label className="switch-row compact">
+                  <span>Invert Vertical Rotation</span>
+                  <input
+                    type="checkbox"
+                    checked={settings.cameraInvertVertical}
+                    onChange={(event) => onSettings({ cameraInvertVertical: event.target.checked })}
+                  />
+                </label>
+
+                <label className="range-row compact">
+                  <span>Mouse Sensitivity ({settings.cameraSensitivity.toFixed(1)}x)</span>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="3.0"
+                    step="0.1"
+                    value={settings.cameraSensitivity}
+                    onChange={(event) => onSettings({ cameraSensitivity: Number(event.target.value) })}
+                  />
+                </label>
+
+                <label className="range-row compact">
+                  <span>Zoom Speed ({settings.cameraZoomSpeed.toFixed(1)}x)</span>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="3.0"
+                    step="0.1"
+                    value={settings.cameraZoomSpeed}
+                    onChange={(event) => onSettings({ cameraZoomSpeed: Number(event.target.value) })}
+                  />
+                </label>
+              </div>
             ) : (
               <div className="settings-placeholder">
                 {category} preferences will live here as the client grows.
@@ -3544,7 +3729,7 @@ function AuthDialog({
   return (
     <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <motion.form
-        className="auth-dialog premium-launcher-panel"
+        className="auth-dialog"
         onSubmit={submit}
         initial={{ y: 24, opacity: 0, scale: 0.97 }}
         animate={{ y: 0, opacity: 1, scale: 1 }}
@@ -3553,72 +3738,59 @@ function AuthDialog({
       >
         <div className="modal-head">
           <div>
-            <span className="auth-pre-title">CUBERANKED GATEWAY</span>
-            <h2>{isRegister ? "Create Account" : "Welcome Back"}</h2>
+            <span>Account</span>
+            <h2>{isRegister ? "Create Account" : "Login"}</h2>
           </div>
-          <button type="button" className="auth-close-btn" onClick={onClose} aria-label="Close account dialog">
+          <button type="button" onClick={onClose} aria-label="Close account dialog">
             <X size={18} aria-hidden="true" />
           </button>
         </div>
 
-        {/* Social Auth (Google Primary) */}
-        <div className="auth-social-section">
-          <button type="button" className="ranked-gate-btn google premium-google-btn" onClick={() => onOAuth("google")}>
-            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#fff" opacity=".9" />
-              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#fff" opacity=".9" />
-              <path d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.62z" fill="#fff" opacity=".9" />
-              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#fff" opacity=".9" />
-            </svg>
-            Sign in with Google
-          </button>
-        </div>
-
-        <div className="auth-divider">
-          <span>OR CONTINUE WITH EMAIL</span>
-        </div>
-
-        <div className="auth-fields premium-auth-fields">
+        <div className="auth-fields">
           {isRegister ? (
-            <label className="premium-input-label">
+            <label>
               <span>Username</span>
-              <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required minLength={3} className="premium-input" placeholder="Enter username" />
+              <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required minLength={3} />
             </label>
           ) : null}
-          <label className="premium-input-label">
-            <span>Email Address</span>
-            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required className="premium-input" placeholder="Enter email address" />
+          <label>
+            <span>Email</span>
+            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required />
           </label>
-          <label className="premium-input-label">
+          <label>
             <span>Password</span>
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={isRegister ? "new-password" : "current-password"} required minLength={isRegister ? 8 : 1} className="premium-input" placeholder="Enter password" />
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={isRegister ? "new-password" : "current-password"} required minLength={isRegister ? 8 : 1} />
           </label>
-          <label className="switch-row compact premium-remember-label">
-            <span>Remember login session</span>
+          <label className="switch-row compact">
+            <span>Remember Me</span>
             <input type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} />
           </label>
         </div>
 
-        {error ? (
-          <div className="auth-error premium-error-box">
-            <span className="error-icon">⚠️</span>
-            <div className="error-content">
-              <strong>Authentication Error</strong>
-              <p>{error}</p>
-            </div>
-          </div>
-        ) : null}
+        {error ? <div className="auth-error">{error}</div> : null}
 
-        <button type="submit" className="auth-submit premium-submit-btn" disabled={busy}>
+        <button type="submit" className="auth-submit" disabled={busy}>
           {isRegister ? <UserPlus size={16} aria-hidden="true" /> : <LogIn size={16} aria-hidden="true" />}
-          {busy ? "Working..." : isRegister ? "Create Account" : "Access Launcher"}
+          {busy ? "Working..." : isRegister ? "Register" : "Login"}
         </button>
 
-        <div className="auth-switch premium-switch-container">
-          <button type="button" className="switch-mode-btn" onClick={() => onMode(isRegister ? "login" : "register")}>
-            {isRegister ? "Already registered? Sign In" : "New to CubeRanked? Register"}
+        <div className="oauth-row">
+          <button type="button" onClick={() => onOAuth("google")} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", width: "100%" }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+              <path d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.62z" fill="#FBBC05" />
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335" />
+            </svg>
+            Google
           </button>
-          <button type="button" className="continue-guest-link" onClick={onGuest}>Continue as Guest →</button>
+        </div>
+
+        <div className="auth-switch">
+          <button type="button" onClick={() => onMode(isRegister ? "login" : "register")}>
+            {isRegister ? "Already have an account?" : "Need an account?"}
+          </button>
+          <button type="button" onClick={onGuest}>Continue as Guest</button>
         </div>
       </motion.form>
     </motion.div>
@@ -3683,19 +3855,8 @@ function ProfileDialog({
     return () => window.clearTimeout(timeout);
   }, [draft, draftKey, onSave, originalKey, isGuest]);
 
-  // Rank badge styling helper
-  const getRankInfo = (rating: number) => {
-    if (rating < 1000) return { name: "Unranked", color: "#64748b", badge: "UR" };
-    if (rating < 1200) return { name: "Bronze", color: "#b45309", badge: "BR" };
-    if (rating < 1400) return { name: "Silver", color: "#94a3b8", badge: "SV" };
-    if (rating < 1600) return { name: "Gold", color: "#d97706", badge: "GD" };
-    if (rating < 1800) return { name: "Platinum", color: "#0d9488", badge: "PL" };
-    if (rating < 2000) return { name: "Diamond", color: "#2563eb", badge: "DM" };
-    return { name: "Master", color: "#7c3aed", badge: "MS" };
-  };
-
   const ratingVal = user.rating ?? 1200;
-  const rankInfo = getRankInfo(ratingVal);
+  const rankInfo = getRankFromRating(ratingVal, user.placementMatchesPlayed != null && user.placementMatchesPlayed < 5);
   const winRate = user.gamesPlayed > 0 ? Math.round((user.wins / user.gamesPlayed) * 100) : 0;
 
   // Recalculate lifetime stats for guest PB & TPS display
@@ -3792,7 +3953,7 @@ function ProfileDialog({
             <span style={{ fontSize: "0.72rem", color: "#64748b", textTransform: "uppercase", fontWeight: 700 }}>Rank Badge</span>
             <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "6px" }}>
               <Award size={18} style={{ color: rankInfo.color }} />
-              <strong style={{ fontSize: "1.1rem", color: "#f1f5f9", fontWeight: 800 }}>{rankInfo.name}</strong>
+              <strong style={{ fontSize: "1.1rem", color: "#f1f5f9", fontWeight: 800 }}>{rankInfo.tier}</strong>
             </div>
           </div>
 

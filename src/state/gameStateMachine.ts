@@ -9,7 +9,8 @@ export type GameStage =
   | "PLAYING"
   | "SOLVED"
   | "RESULT"
-  | "PRIVATE_LOBBY";
+  | "PRIVATE_LOBBY"
+  | "LEARN";
 
 export type GameMode = "practice" | "bot-race" | "ranked" | "private";
 
@@ -33,6 +34,7 @@ export type GameEvent =
   | { type: "SELECT_BOT_RACE" }
   | { type: "SELECT_RANKED" }
   | { type: "SELECT_PRIVATE" }
+  | { type: "SELECT_LEARN" }
   | { type: "QUEUE_CANCELLED" }
   | { type: "MATCH_FOUND" }
   | { type: "LOADING_COMPLETE" }
@@ -61,6 +63,14 @@ export const initialGameState: GameState = {
 
 export function gameStateReducer(state: GameState, event: GameEvent): GameState {
   switch (event.type) {
+    case "SELECT_LEARN":
+      return {
+        stage: "LEARN",
+        overlay: "NONE",
+        loadingId: state.loadingId,
+        mode: null,
+      };
+
     case "OPEN_MODE_SELECT":
       if (state.stage !== "HOME") return state;
       return { ...state, stage: "MODE_SELECT", overlay: "NONE" };

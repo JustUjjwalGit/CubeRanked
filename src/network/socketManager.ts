@@ -98,7 +98,7 @@ interface ClientToServerEvents {
   "session:authenticate": (payload: { username: string; avatar: string | null }) => void;
 }
 
-const socketBaseUrl = import.meta.env.VITE_SOCKET_URL ?? "http://127.0.0.1:4000/v1";
+const socketBaseUrl = import.meta.env.VITE_SOCKET_URL ?? `http://${window.location.hostname}:4000/v1`;
 const CLIENT_ID_KEY = "cuberanked.clientId";
 
 class CubeRankedSocketManager {
@@ -646,7 +646,7 @@ function getOrCreateClientId(): string {
     return saved;
   }
 
-  const clientId = crypto.randomUUID();
+  const clientId = crypto.randomUUID() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   localStorage.setItem(CLIENT_ID_KEY, clientId);
   return clientId;
 }

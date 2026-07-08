@@ -98,6 +98,16 @@ export interface MatchOpponentMovePayload {
   synchronizationDelayMs: number;
 }
 
+export interface RatingUpdate {
+  clientId: string;
+  previousRating: number;
+  newRating: number;
+  isPlacement: boolean;
+  placementMatchesPlayed: number;
+  tierDemoted?: boolean;
+  tierPromoted?: boolean;
+}
+
 export interface MatchResultsPayload {
   matchId: string;
   scrambleId: string;
@@ -107,6 +117,7 @@ export interface MatchResultsPayload {
   timeDifferenceMs: number | null;
   players: MatchPlayerSnapshot[];
   serverNow: number;
+  ratingUpdates?: RatingUpdate[];
 }
 
 export interface MatchDisconnectPayload {

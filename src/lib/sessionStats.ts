@@ -18,6 +18,10 @@ export interface SessionSettings {
   hudVisible: boolean;
   showKeyboardCheatSheet: boolean;
   keybindings: Record<string, string>;
+  cameraMode: "competitive" | "free-orbit";
+  cameraInvertVertical: boolean;
+  cameraSensitivity: number;
+  cameraZoomSpeed: number;
 }
 
 export interface SessionStats {
@@ -44,6 +48,10 @@ export const DEFAULT_SETTINGS: SessionSettings = {
     L: "L",
     B: "B",
   },
+  cameraMode: "competitive",
+  cameraInvertVertical: false,
+  cameraSensitivity: 1.0,
+  cameraZoomSpeed: 1.0,
 };
 
 export function calculateStats(history: SolveRecord[]): SessionStats {
@@ -104,7 +112,7 @@ export function createSolveRecord(input: {
   const seconds = Math.max(input.rawTimeMs / 1_000, 0.001);
 
   return {
-    id: crypto.randomUUID(),
+    id: crypto.randomUUID() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     rawTimeMs: input.rawTimeMs,
     finalTimeMs,
     penalty: input.penalty,

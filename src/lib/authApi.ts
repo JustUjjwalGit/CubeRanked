@@ -1,7 +1,7 @@
 import type { ApiFailure } from "./api";
 import type { SessionSettings, SolveRecord } from "./sessionStats";
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:4000/api/v1";
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000/api/v1`;
 const ACCESS_TOKEN_KEY = "cuberanked.auth.accessToken";
 const REFRESH_TOKEN_KEY = "cuberanked.auth.refreshToken";
 const EXPIRES_AT_KEY = "cuberanked.auth.accessTokenExpiresAt";
@@ -41,6 +41,12 @@ export interface UserProfile {
   peakRating?: number;
   streak?: number;
   seasonRating?: number;
+  glicko?: {
+    rating: number;
+    rd: number;
+    vol: number;
+  };
+  placementMatchesPlayed?: number;
 }
 
 export interface AuthSession {
