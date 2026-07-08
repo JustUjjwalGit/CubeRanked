@@ -141,6 +141,10 @@ class CubeRankedSocketManager {
     synchronizationDelayMs: null,
     roomState: null,
     roomError: null,
+    friends: [],
+    friendRequests: [],
+    recentOpponents: [],
+    incomingInvite: null,
   };
 
   connect() {
@@ -311,6 +315,32 @@ class CubeRankedSocketManager {
       this.incrementReceived();
       this.emitMatchEvent("playAgainCancelled", payload);
     });
+
+    (this.socket as any).on("friend:list", (payload: any) => {
+      this.incrementReceived();
+      this.setSnapshot({ friends: payload });
+    });
+
+    (this.socket as any).on("friend:requests", (payload: any) => {
+      this.incrementReceived();
+      this.setSnapshot({ friendRequests: payload });
+    });
+
+    (this.socket as any).on("recent:list", (payload: any) => {
+      this.incrementReceived();
+      this.setSnapshot({ recentOpponents: payload });
+    });
+
+    (this.socket as any).on("friend:sync_trigger", () => {
+      this.incrementReceived();
+      (this.socket as any)?.emit("friend:list");
+      (this.socket as any)?.emit("recent:list");
+    });
+
+    (this.socket as any).on("invite:received", (payload: any) => {
+      this.incrementReceived();
+      this.setSnapshot({ incomingInvite: payload });
+    });
   }
 
   disconnect() {
@@ -403,9 +433,9 @@ class CubeRankedSocketManager {
     this.incrementSent();
   }
 
-  authenticateSession(username: string, avatar: string | null) {
+  authenticateSession(userId: string, username: string, avatar: string | null) {
     if (!this.socket?.connected) return;
-    this.socket.emit("session:authenticate", { username, avatar });
+    (this.socket as any).emit("session:authenticate", { userId, username, avatar });
     this.incrementSent();
   }
 
@@ -538,6 +568,64 @@ class CubeRankedSocketManager {
 
   private incrementReceived() {
     this.setSnapshot({ eventsReceived: this.snapshot.eventsReceived + 1 });
+  }
+
+  sendFriendRequest(targetUsername: string) {
+    if (!this.socket?.connected) return;
+    this.socket.emit("friend:request" as any, { targetUsername });
+    this.incrementSent();
+  }
+
+  respondFriendRequest(fromId: string, accept: boolean) {
+    if (!this.socket?.connected) return;
+    this.socket.emit("friend:respond" as any, { fromId, accept });
+    this.incrementSent();
+  }
+
+  removeFriend(friendId: string) {
+    if (!this.socket?.connected) return;
+    this.socket.emit("friend:remove" as any, { friendId });
+    this.incrementSent();
+  }
+
+  blockUser(targetId: string, block: boolean) {
+    if (!this.socket?.connected) return;
+    this.socket.emit("user:block" as any, { targetId, block });
+    this.incrementSent();
+  }
+
+  sendDirectInvite(inviteeId: string, type: "private-room" | "spectate", roomCode?: string) {
+    if (!this.socket?.connected) return;
+    this.socket.emit("invite:send" as any, { inviteeId, type, roomCode });
+    this.incrementSent();
+  }
+
+  clearIncomingInvite() {
+    this.setSnapshot({ incomingInvite: null });
+  }
+
+  updatePrivacySettings(privacy: {
+    showOnlineStatus: boolean;
+    allowFriendRequests: boolean;
+    allowSpectators: boolean;
+    allowPrivateInvites: boolean;
+  }) {
+    if (!this.socket?.connected) return;
+    this.socket.emit("privacy:update" as any, privacy);
+    this.incrementSent();
+  }
+
+  updateActivity(activity: "online" | "practice" | "queue" | "match") {
+    if (!this.socket?.connected) return;
+    this.socket.emit("activity:update" as any, activity);
+    this.incrementSent();
+  }
+
+  syncSocialData() {
+    if (!this.socket?.connected) return;
+    this.socket.emit("friend:list" as any);
+    this.socket.emit("recent:list" as any);
+    this.incrementSent();
   }
 
   private setSnapshot(update: Partial<SocketDebugSnapshot>) {

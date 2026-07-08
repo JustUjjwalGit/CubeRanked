@@ -37,6 +37,7 @@ import CubeScene from "./components/cube/CubeScene";
 import AppBackground from "./components/AppBackground";
 import IdentityScreen from "./components/IdentityScreen";
 import RankedGateModal from "./components/RankedGateModal";
+import SocialSidebar from "./components/SocialSidebar";
 import { makeMove, MOVE_FACES, parseMove, type Face } from "./lib/cubeEngine";
 import { useBackendHealth } from "./hooks/useBackendHealth";
 import { useSocketConnection } from "./hooks/useSocketConnection";
@@ -310,6 +311,23 @@ export default function App() {
   const stage = gameState.stage;
   const overlay = gameState.overlay;
   const gameMode = gameState.mode;
+
+  // Synchronize client activity with the socket presence server based on game stage
+  useEffect(() => {
+    if (socketSnapshot.connectionState !== "connected") return;
+
+    if (stage === "MATCHMAKING") {
+      socketManager.updateActivity("queue");
+    } else if (stage === "READY" || stage === "INSPECTION" || stage === "PLAYING" || stage === "SOLVED") {
+      if (gameMode === "practice" || gameMode === "bot-race") {
+        socketManager.updateActivity("practice");
+      } else {
+        socketManager.updateActivity("match");
+      }
+    } else {
+      socketManager.updateActivity("online");
+    }
+  }, [stage, gameMode, socketSnapshot.connectionState]);
   const isBotRace = gameMode === "bot-race";
   const isRanked = gameMode === "ranked";
   const inspectionRemaining = Math.max(0, 15 - inspectionElapsedMs / 1_000);
@@ -777,10 +795,14 @@ export default function App() {
   useEffect(() => {
     if (socketSnapshot.connectionState === "connected") {
       if (auth.mode === "authenticated" && auth.user) {
-        socketManager.authenticateSession(auth.user.username, auth.user.avatar);
+        socketManager.authenticateSession(auth.user.id, auth.user.username, auth.user.avatar);
+        socketManager.syncSocialData();
+      } else if (auth.mode === "guest") {
+        socketManager.authenticateSession(auth.guestUsername, auth.guestUsername, null);
+        socketManager.syncSocialData();
       }
     }
-  }, [auth.mode, auth.user?.username, auth.user?.avatar, socketSnapshot.connectionState]);
+  }, [auth.mode, auth.user?.id, auth.user?.username, auth.user?.avatar, auth.guestUsername, socketSnapshot.connectionState]);
 
   useEffect(() => {
     if (auth.mode !== "authenticated") {
@@ -1464,6 +1486,7 @@ export default function App() {
               onBotRace={() => dispatch({ type: "SELECT_BOT_RACE" })}
               onRanked={enterRankedQueue}
               onPrivate={() => dispatch({ type: "SELECT_PRIVATE" })}
+              socketSnapshot={socketSnapshot}
             />
           ) : stage === "MATCHMAKING" ? (
             <QueueScreen
@@ -1665,6 +1688,58 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {socketSnapshot.incomingInvite ? (
+          <div className="ranked-gate-overlay" style={{ zIndex: 9200 }}>
+            <div className="ranked-gate-modal" style={{ maxWidth: "380px" }}>
+              <div className="ranked-gate-header">
+                <div className="ranked-gate-trophy" style={{ background: "rgba(99,102,241,0.15)", borderColor: "rgba(99,102,241,0.25)", color: "#818cf8" }}>
+                  <Users size={24} />
+                </div>
+                <div>
+                  <h2>Lobby Invite</h2>
+                  <p style={{ marginTop: "4px" }}>
+                    <strong>{socketSnapshot.incomingInvite.inviterName}</strong> has invited you to{" "}
+                    {socketSnapshot.incomingInvite.type === "private-room" ? "race in a Private Room" : "spectate their match"}!
+                  </p>
+                </div>
+              </div>
+
+              <div className="ranked-gate-actions" style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
+                <button
+                  type="button"
+                  className="ranked-gate-btn google"
+                  onClick={() => {
+                    const code = socketSnapshot.incomingInvite.roomCode;
+                    const type = socketSnapshot.incomingInvite.type;
+                    socketManager.clearIncomingInvite();
+                    if (code) {
+                      if (type === "private-room") {
+                        socketManager.joinRoom(code);
+                      } else {
+                        socketManager.spectateRoom(code);
+                      }
+                      dispatch({ type: "SELECT_PRIVATE" });
+                    }
+                  }}
+                >
+                  Accept Invite
+                </button>
+                <button
+                  type="button"
+                  className="ranked-gate-btn email"
+                  onClick={() => {
+                    socketManager.clearIncomingInvite();
+                  }}
+                >
+                  Decline
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {notice ? (
           <motion.div
             className="client-toast"
@@ -1741,6 +1816,7 @@ function HomeScreen({
   onBotRace,
   onRanked,
   onPrivate,
+  socketSnapshot,
 }: {
   connectionState: SocketConnectionState;
   onlineCount: number;
@@ -1756,7 +1832,9 @@ function HomeScreen({
   onBotRace: () => void;
   onRanked: () => void;
   onPrivate: () => void;
+  socketSnapshot: SocketDebugSnapshot;
 }) {
+  const [socialOpen, setSocialOpen] = useState(false);
   return (
     <motion.section
       className="home-screen"
@@ -1788,12 +1866,65 @@ function HomeScreen({
             <span className="pulse-dot" />
             {onlineCount.toLocaleString()} Online
           </div>
+
+          {authMode !== "loading" && (
+            <button
+              type="button"
+              className="social-toggle-btn"
+              onClick={() => setSocialOpen(true)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "8px 14px",
+                borderRadius: "12px",
+                background: "rgba(255, 255, 255, 0.06)",
+                border: "1px solid rgba(148, 163, 184, 0.16)",
+                color: "#e2e8f0",
+                fontSize: "0.85rem",
+                fontWeight: 700,
+                cursor: "pointer",
+                transition: "all 150ms ease",
+                position: "relative",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "rgba(255, 255, 255, 0.12)";
+                e.currentTarget.style.borderColor = "rgba(99, 102, 241, 0.4)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "rgba(255, 255, 255, 0.06)";
+                e.currentTarget.style.borderColor = "rgba(148, 163, 184, 0.16)";
+              }}
+            >
+              <Users size={15} />
+              <span>Social</span>
+              {socketSnapshot.friendRequests.length > 0 && (
+                <span style={{
+                  display: "grid",
+                  placeItems: "center",
+                  minWidth: "18px",
+                  height: "18px",
+                  borderRadius: "50%",
+                  background: "#ef4444",
+                  color: "#fff",
+                  fontSize: "0.7rem",
+                  fontWeight: 800,
+                  padding: "0 4px",
+                }}>
+                  {socketSnapshot.friendRequests.length}
+                </span>
+              )}
+            </button>
+          )}
           
           {authMode === "authenticated" && user ? (
             <div className="user-profile-widget">
               <button type="button" className="profile-chip-btn" onClick={onProfile}>
-                <span>{user.avatar ? "" : user.username.slice(0, 2).toUpperCase()}</span>
-                {user.avatar ? <img src={user.avatar} alt="" /> : null}
+                {user.avatar ? (
+                  <img src={user.avatar} alt="" />
+                ) : (
+                  <span>{user.username.slice(0, 2).toUpperCase()}</span>
+                )}
                 <strong>{user.username}</strong>
               </button>
               <button type="button" className="logout-icon-btn" onClick={onLogout} title="Logout">
@@ -1898,6 +2029,15 @@ function HomeScreen({
           </button>
         </div>
       </footer>
+
+      <AnimatePresence>
+        {socialOpen && (
+          <SocialSidebar
+            snapshot={socketSnapshot}
+            onClose={() => setSocialOpen(false)}
+          />
+        )}
+      </AnimatePresence>
     </motion.section>
   );
 }
@@ -3356,6 +3496,10 @@ function AppSettingsDialog({
   );
 }
 
+
+
+
+
 function AuthDialog({
   mode,
   error,
@@ -3400,7 +3544,7 @@ function AuthDialog({
   return (
     <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <motion.form
-        className="auth-dialog"
+        className="auth-dialog premium-launcher-panel"
         onSubmit={submit}
         initial={{ y: 24, opacity: 0, scale: 0.97 }}
         animate={{ y: 0, opacity: 1, scale: 1 }}
@@ -3409,60 +3553,77 @@ function AuthDialog({
       >
         <div className="modal-head">
           <div>
-            <span>Account</span>
-            <h2>{isRegister ? "Create Account" : "Login"}</h2>
+            <span className="auth-pre-title">CUBERANKED GATEWAY</span>
+            <h2>{isRegister ? "Create Account" : "Welcome Back"}</h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close account dialog">
+          <button type="button" className="auth-close-btn" onClick={onClose} aria-label="Close account dialog">
             <X size={18} aria-hidden="true" />
           </button>
         </div>
 
-        <div className="auth-fields">
+        {/* Social Auth (Google Primary) */}
+        <div className="auth-social-section">
+          <button type="button" className="ranked-gate-btn google premium-google-btn" onClick={() => onOAuth("google")}>
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#fff" opacity=".9" />
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#fff" opacity=".9" />
+              <path d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.62z" fill="#fff" opacity=".9" />
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#fff" opacity=".9" />
+            </svg>
+            Sign in with Google
+          </button>
+        </div>
+
+        <div className="auth-divider">
+          <span>OR CONTINUE WITH EMAIL</span>
+        </div>
+
+        <div className="auth-fields premium-auth-fields">
           {isRegister ? (
-            <label>
+            <label className="premium-input-label">
               <span>Username</span>
-              <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required minLength={3} />
+              <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required minLength={3} className="premium-input" placeholder="Enter username" />
             </label>
           ) : null}
-          <label>
-            <span>Email</span>
-            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required />
+          <label className="premium-input-label">
+            <span>Email Address</span>
+            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required className="premium-input" placeholder="Enter email address" />
           </label>
-          <label>
+          <label className="premium-input-label">
             <span>Password</span>
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={isRegister ? "new-password" : "current-password"} required minLength={isRegister ? 8 : 1} />
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={isRegister ? "new-password" : "current-password"} required minLength={isRegister ? 8 : 1} className="premium-input" placeholder="Enter password" />
           </label>
-          <label className="switch-row compact">
-            <span>Remember Me</span>
+          <label className="switch-row compact premium-remember-label">
+            <span>Remember login session</span>
             <input type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} />
           </label>
         </div>
 
-        {error ? <div className="auth-error">{error}</div> : null}
+        {error ? (
+          <div className="auth-error premium-error-box">
+            <span className="error-icon">⚠️</span>
+            <div className="error-content">
+              <strong>Authentication Error</strong>
+              <p>{error}</p>
+            </div>
+          </div>
+        ) : null}
 
-        <button type="submit" className="auth-submit" disabled={busy}>
+        <button type="submit" className="auth-submit premium-submit-btn" disabled={busy}>
           {isRegister ? <UserPlus size={16} aria-hidden="true" /> : <LogIn size={16} aria-hidden="true" />}
-          {busy ? "Working..." : isRegister ? "Register" : "Login"}
+          {busy ? "Working..." : isRegister ? "Create Account" : "Access Launcher"}
         </button>
 
-        <div className="oauth-row">
-          <button type="button" onClick={() => onOAuth("google")}>Google</button>
-          <button type="button" onClick={() => onOAuth("github")}>GitHub</button>
-          <button type="button" onClick={() => onOAuth("discord")}>Discord</button>
-        </div>
-
-        <div className="auth-switch">
-          <button type="button" onClick={() => onMode(isRegister ? "login" : "register")}>
-            {isRegister ? "Already have an account?" : "Need an account?"}
+        <div className="auth-switch premium-switch-container">
+          <button type="button" className="switch-mode-btn" onClick={() => onMode(isRegister ? "login" : "register")}>
+            {isRegister ? "Already registered? Sign In" : "New to CubeRanked? Register"}
           </button>
-          <button type="button" onClick={onGuest}>Continue as Guest</button>
+          <button type="button" className="continue-guest-link" onClick={onGuest}>Continue as Guest →</button>
         </div>
       </motion.form>
     </motion.div>
   );
 }
-
-
 
 function ProfileDialog({
   user,

@@ -3,6 +3,7 @@ import { Server } from "socket.io";
 import type { FastifyInstance } from "fastify";
 import { buildCorsOrigins } from "../config/cors.js";
 import { validateSolve } from "../cube/cube-validator.js";
+import { UserStore } from "../users/user-store.js";
 
 const SHARED_TEST_ROOM_ID = "shared-test-room";
 const MATCH_ROOM_PREFIX = "match:";
@@ -37,10 +38,13 @@ interface ClientSession {
   username: string;
   matchId: string | null;
   queuedAt: number | null;
+  userId?: string;
+  activity?: "online" | "practice" | "queue" | "match" | "offline";
 }
 
 interface MatchPlayer {
   clientId: string;
+  userId?: string;
   socketId: string;
   username: string;
   ready: boolean;
@@ -127,6 +131,7 @@ const FACES = ["R", "L", "U", "D", "F", "B"] as const;
 const SUFFIXES = ["", "'", "2"] as const;
 
 export function createSocketManager(app: FastifyInstance) {
+  const store = new UserStore(app.env);
   const io = new Server(app.server, {
     cors: {
       origin: buildCorsOrigins(app.env),
@@ -149,6 +154,7 @@ export function createSocketManager(app: FastifyInstance) {
       connectedPlayers: namespace.sockets.size,
       timestamp: Date.now(),
     });
+    namespace.emit("friend:sync_trigger");
   }
 
   function getSocket(clientId: string) {
@@ -203,9 +209,11 @@ export function createSocketManager(app: FastifyInstance) {
 
         session.matchId = matchId;
         session.queuedAt = null;
+        session.activity = "match";
 
         return {
           clientId,
+          userId: session.userId,
           socketId: session.socketId,
           username: session.username,
           ready: false,
@@ -419,6 +427,22 @@ export function createSocketManager(app: FastifyInstance) {
         }
         broadcastRoomState(room);
       }
+    }
+
+    // Add to recent players list and restore activity to online
+    const p1 = match.players[0];
+    const p2 = match.players[1];
+    if (p1 && p2) {
+      if (p1.userId && p2.userId) {
+        void store.addRecentPlayer(p1.userId, p2.userId).catch(console.error);
+        void store.addRecentPlayer(p2.userId, p1.userId).catch(console.error);
+      }
+      
+      const s1 = sessions.get(p1.clientId);
+      const s2 = sessions.get(p2.clientId);
+      if (s1) s1.activity = "online";
+      if (s2) s2.activity = "online";
+      broadcastPresence();
     }
   }
 
@@ -1048,6 +1072,265 @@ export function createSocketManager(app: FastifyInstance) {
       
       broadcastPresence();
     });
+
+    // Activity Updates
+    socket.on("activity:update", (activity: "online" | "practice" | "queue" | "match") => {
+      session.activity = activity;
+      broadcastPresence();
+    });
+
+    // Friend Request (by username)
+    socket.on("friend:request", async (payload: { targetUsername: string }) => {
+      if (!session.userId) {
+        socket.emit("friend:error", { message: "You must be logged in to manage friends" });
+        return;
+      }
+      
+      try {
+        const result = await store.sendFriendRequest(session.userId, payload.targetUsername);
+        if (!result.success) {
+          socket.emit("friend:error", { message: result.error || "Failed to send request" });
+          return;
+        }
+
+        if (result.error === "accepted_automatically") {
+          socket.emit("friend:notice", { message: `You are now friends with ${payload.targetUsername}!` });
+          
+          // Sync lists for both
+          socket.emit("friend:sync_trigger");
+          const targetUser = await store.findUserByUsername(payload.targetUsername);
+          if (targetUser) {
+            const targetSession = Array.from(sessions.values()).find((s) => s.userId === targetUser.id);
+            if (targetSession) {
+              const targetSocket = namespace.sockets.get(targetSession.socketId);
+              targetSocket?.emit("friend:sync_trigger");
+              targetSocket?.emit("notification:new", {
+                type: "friend_accept",
+                message: `${session.username} accepted your friend request!`,
+                timestamp: Date.now(),
+              });
+            }
+          }
+        } else {
+          socket.emit("friend:success", { message: `Friend request sent to ${payload.targetUsername}` });
+          
+          // Notify target user
+          const targetUser = await store.findUserByUsername(payload.targetUsername);
+          if (targetUser) {
+            const targetSession = Array.from(sessions.values()).find((s) => s.userId === targetUser.id);
+            if (targetSession) {
+              const targetSocket = namespace.sockets.get(targetSession.socketId);
+              targetSocket?.emit("friend:request-received", {
+                fromId: session.userId,
+                fromUsername: session.username,
+                fromAvatar: payload.targetUsername, // placeholder
+              });
+              targetSocket?.emit("notification:new", {
+                type: "friend_request",
+                message: `New friend request from ${session.username}`,
+                timestamp: Date.now(),
+              });
+            }
+          }
+        }
+      } catch (err) {
+        socket.emit("friend:error", { message: "An unexpected error occurred" });
+      }
+    });
+
+    // Friend Respond (Accept / Reject)
+    socket.on("friend:respond", async (payload: { fromId: string; accept: boolean }) => {
+      if (!session.userId) return;
+
+      try {
+        const result = await store.respondFriendRequest(session.userId, payload.fromId, payload.accept);
+        if (result.success) {
+          socket.emit("friend:sync_trigger");
+          
+          // Find online socket for fromUser to notify
+          const fromSession = Array.from(sessions.values()).find((s) => s.userId === payload.fromId);
+          if (fromSession) {
+            const fromSocket = namespace.sockets.get(fromSession.socketId);
+            fromSocket?.emit("friend:sync_trigger");
+            
+            if (payload.accept) {
+              fromSocket?.emit("notification:new", {
+                type: "friend_accept",
+                message: `${session.username} accepted your friend request!`,
+                timestamp: Date.now(),
+              });
+            }
+          }
+        }
+      } catch (err) {
+        // ignore
+      }
+    });
+
+    // Friend Remove
+    socket.on("friend:remove", async (payload: { friendId: string }) => {
+      if (!session.userId) return;
+
+      try {
+        const success = await store.removeFriend(session.userId, payload.friendId);
+        if (success) {
+          socket.emit("friend:sync_trigger");
+          
+          const targetSession = Array.from(sessions.values()).find((s) => s.userId === payload.friendId);
+          if (targetSession) {
+            namespace.sockets.get(targetSession.socketId)?.emit("friend:sync_trigger");
+          }
+        }
+      } catch (err) {
+        // ignore
+      }
+    });
+
+    // User Block
+    socket.on("user:block", async (payload: { targetId: string; block: boolean }) => {
+      if (!session.userId) return;
+
+      try {
+        const success = await store.blockUser(session.userId, payload.targetId, payload.block);
+        if (success) {
+          socket.emit("friend:sync_trigger");
+          
+          const targetSession = Array.from(sessions.values()).find((s) => s.userId === payload.targetId);
+          if (targetSession) {
+            namespace.sockets.get(targetSession.socketId)?.emit("friend:sync_trigger");
+          }
+        }
+      } catch (err) {
+        // ignore
+      }
+    });
+
+    // Friend List Query
+    socket.on("friend:list", async () => {
+      if (!session.userId) {
+        socket.emit("friend:list", []);
+        socket.emit("friend:requests", []);
+        return;
+      }
+
+      try {
+        const currentUser = await store.findUserById(session.userId);
+        if (!currentUser) return;
+
+        const friendList = [];
+        if (currentUser.friends) {
+          for (const friendId of currentUser.friends) {
+            const f = await store.findUserById(friendId);
+            if (f) {
+              // Find if online in active sessions
+              const onlineSession = Array.from(sessions.values()).find((s) => s.userId === f.id);
+              friendList.push({
+                id: f.id,
+                username: f.username,
+                avatar: f.avatar,
+                online: !!onlineSession,
+                activity: onlineSession?.activity || "offline",
+                rating: f.rating || 1200,
+                peakRating: f.peakRating || 1200,
+                favoriteMode: f.favoriteMode || "Practice",
+              });
+            }
+          }
+        }
+
+        socket.emit("friend:list", friendList);
+        socket.emit("friend:requests", currentUser.friendRequests || []);
+      } catch (err) {
+        // ignore
+      }
+    });
+
+    // Recent Opponents Query
+    socket.on("recent:list", async () => {
+      if (!session.userId) {
+        socket.emit("recent:list", []);
+        return;
+      }
+
+      try {
+        const currentUser = await store.findUserById(session.userId);
+        if (!currentUser) return;
+
+        socket.emit("recent:list", currentUser.recentPlayers || []);
+      } catch (err) {
+        // ignore
+      }
+    });
+
+    // Privacy Settings Update
+    socket.on("privacy:update", async (payload: {
+      showOnlineStatus: boolean;
+      allowFriendRequests: boolean;
+      allowSpectators: boolean;
+      allowPrivateInvites: boolean;
+    }) => {
+      if (!session.userId) return;
+
+      try {
+        await store.updatePrivacy(session.userId, payload);
+        socket.emit("privacy:success", payload);
+      } catch (err) {
+        // ignore
+      }
+    });
+
+    // Direct Sockets Invites (Private Room or Spectate)
+    socket.on("invite:send", (payload: { inviteeId: string; type: "private-room" | "spectate"; roomCode?: string }) => {
+      const inviteeSession = Array.from(sessions.values()).find((s) => s.userId === payload.inviteeId);
+      if (!inviteeSession) {
+        socket.emit("invite:error", { message: "Player is currently offline" });
+        return;
+      }
+
+      const inviteeSocket = namespace.sockets.get(inviteeSession.socketId);
+      if (!inviteeSocket) {
+        socket.emit("invite:error", { message: "Player is currently offline" });
+        return;
+      }
+
+      // Check if user has disabled invites
+      store.findUserById(payload.inviteeId).then((inviteeUser) => {
+        if (inviteeUser && inviteeUser.privacy && !inviteeUser.privacy.allowPrivateInvites) {
+          socket.emit("invite:error", { message: "This player has private invites disabled" });
+          return;
+        }
+
+        // Send the invite
+        inviteeSocket.emit("invite:received", {
+          inviterId: session.userId || session.clientId,
+          inviterName: session.username,
+          type: payload.type,
+          roomCode: payload.roomCode,
+        });
+
+        inviteeSocket.emit("notification:new", {
+          type: payload.type === "private-room" ? "match_invite" : "private_room_invite",
+          message: `${session.username} invited you to ${payload.type === "private-room" ? "race in a Private Room" : "Spectate"}`,
+          timestamp: Date.now(),
+          roomCode: payload.roomCode,
+        });
+
+        socket.emit("invite:sent", { success: true });
+      }).catch(() => {
+        socket.emit("invite:error", { message: "Failed to send invite" });
+      });
+    });
+    
+    // Google details or link
+    socket.on("session:link_google", async (payload: { googleId: string; email: string; username: string; avatar: string | null }) => {
+      if (!session.userId) return;
+      try {
+        await store.linkGoogleAccount(session.userId, payload.googleId, payload.avatar);
+      } catch (err) {
+        // ignore
+      }
+    });
+
     socket.on("cube:move", (payload: ClientMovePayload) => {
       socket.to(SHARED_TEST_ROOM_ID).emit("cube:move", {
         ...payload,

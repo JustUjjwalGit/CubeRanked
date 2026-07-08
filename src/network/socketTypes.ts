@@ -191,4 +191,8 @@ export interface SocketDebugSnapshot {
   synchronizationDelayMs: number | null;
   roomState: RoomState | null;
   roomError: string | null;
+  friends: any[];
+  friendRequests: any[];
+  recentOpponents: any[];
+  incomingInvite: any | null;
 }
