@@ -15,6 +15,9 @@ export const envSchema = z.object({
   AUTH_REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
   AUTH_STORE_PATH: z.string().min(1).default("data/auth-store.json"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_REDIRECT_URI: z.string().optional(),
 }).superRefine((env, context) => {
   if (env.NODE_ENV === "production" && env.AUTH_JWT_SECRET === "dev-only-cuberanked-secret-change-me") {
     context.addIssue({

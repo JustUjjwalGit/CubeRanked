@@ -11,7 +11,10 @@ describe("gameStateReducer", () => {
     expect(loading.loadingId).toBe(1);
     expect(loading.mode).toBe("practice");
 
-    const ready = gameStateReducer(loading, { type: "LOADING_COMPLETE" });
+    const countdown = gameStateReducer(loading, { type: "LOADING_COMPLETE" });
+    expect(countdown.stage).toBe("COUNTDOWN");
+
+    const ready = gameStateReducer(countdown, { type: "COUNTDOWN_COMPLETE" });
     expect(ready.stage).toBe("READY");
 
     const inspection = gameStateReducer(ready, { type: "START_INSPECTION" });
@@ -30,10 +33,13 @@ describe("gameStateReducer", () => {
   it("keeps pause as an overlay instead of replacing gameplay state", () => {
     const ready = gameStateReducer(
       gameStateReducer(
-        gameStateReducer(initialGameState, { type: "OPEN_MODE_SELECT" }),
-        { type: "SELECT_PRACTICE" },
+        gameStateReducer(
+          gameStateReducer(initialGameState, { type: "OPEN_MODE_SELECT" }),
+          { type: "SELECT_PRACTICE" },
+        ),
+        { type: "LOADING_COMPLETE" },
       ),
-      { type: "LOADING_COMPLETE" },
+      { type: "COUNTDOWN_COMPLETE" },
     );
 
     const paused = gameStateReducer(ready, { type: "PAUSE" });
@@ -70,7 +76,10 @@ describe("gameStateReducer", () => {
     const countdown = gameStateReducer(loading, { type: "LOADING_COMPLETE" });
     expect(countdown.stage).toBe("COUNTDOWN");
 
-    const playing = gameStateReducer(countdown, { type: "COUNTDOWN_COMPLETE" });
+    const ready = gameStateReducer(countdown, { type: "COUNTDOWN_COMPLETE" });
+    expect(ready.stage).toBe("READY");
+
+    const playing = gameStateReducer(ready, { type: "FIRST_MOVE" });
     expect(playing.stage).toBe("PLAYING");
 
     const solved = gameStateReducer(playing, { type: "SOLVE_COMPLETE" });

@@ -1,15 +1,19 @@
 services:
-  frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile.frontend
-    ports:
-      - "5173:5173"
+  db:
+    image: postgres:15-alpine
     environment:
-      VITE_API_BASE_URL: http://127.0.0.1:4000/api/v1
-      VITE_SOCKET_URL: http://127.0.0.1:4000/v1
-    depends_on:
-      - backend
+      POSTGRES_USER: cuberanked
+      POSTGRES_PASSWORD: cuberanked
+      POSTGRES_DB: cuberanked
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
 
   backend:
     build:
@@ -26,5 +30,26 @@ services:
       AUTH_REFRESH_TOKEN_TTL_DAYS: 30
       AUTH_STORE_PATH: data/auth-store.json
       LOG_LEVEL: info
+      DATABASE_URL: postgresql://cuberanked:cuberanked@db:5432/cuberanked?schema=public
+      REDIS_URL: redis://redis:6379
     ports:
       - "4000:4000"
+    depends_on:
+      - db
+      - redis
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_BASE_URL: http://127.0.0.1:4000/api/v1
+      VITE_SOCKET_URL: http://127.0.0.1:4000/v1
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+

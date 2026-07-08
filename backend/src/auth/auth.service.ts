@@ -25,6 +25,10 @@ export interface PublicUserProfile {
   averageTimeMs: number | null;
   settings: StoredSettings;
   statistics: StoredStatistics;
+  rating?: number;
+  peakRating?: number;
+  streak?: number;
+  seasonRating?: number;
 }
 
 export interface AuthSession {
@@ -174,11 +178,112 @@ export class AuthService {
       throw new ValidationError("Unsupported OAuth provider");
     }
 
-    return {
-      provider: normalized,
-      configured: false,
-      authorizationUrl: null,
+    if (normalized === "google") {
+      const clientId = this.env.GOOGLE_CLIENT_ID;
+      const redirectUri = this.env.GOOGLE_REDIRECT_URI;
+
+      if (!clientId || !redirectUri) {
+        return { provider: normalized, configured: false, authorizationUrl: null };
+      }
+
+      const params = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        response_type: "code",
+        scope: "openid email profile",
+        access_type: "offline",
+        prompt: "select_account",
+      });
+
+      return {
+        provider: normalized,
+        configured: true,
+        authorizationUrl: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
+      };
+    }
+
+    return { provider: normalized, configured: false, authorizationUrl: null };
+  }
+
+  async handleGoogleCallback(code: string): Promise<AuthSession> {
+    const clientId = this.env.GOOGLE_CLIENT_ID;
+    const clientSecret = this.env.GOOGLE_CLIENT_SECRET;
+    const redirectUri = this.env.GOOGLE_REDIRECT_URI;
+
+    if (!clientId || !clientSecret || !redirectUri) {
+      throw new ValidationError("Google OAuth is not configured");
+    }
+
+    // Exchange code for tokens
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      throw new AuthenticationError("Failed to exchange Google authorization code");
+    }
+
+    const tokenData = await tokenRes.json() as { access_token?: string; id_token?: string };
+    if (!tokenData.access_token) {
+      throw new AuthenticationError("No access token from Google");
+    }
+
+    // Fetch user info from Google
+    const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+
+    if (!userInfoRes.ok) {
+      throw new AuthenticationError("Failed to fetch Google user info");
+    }
+
+    const googleUser = await userInfoRes.json() as {
+      id: string;
+      email: string;
+      name: string;
+      picture?: string;
+      verified_email?: boolean;
     };
+
+    // Find or create user
+    let user = await this.store.findUserByGoogleId(googleUser.id);
+
+    if (!user) {
+      // Check if email already exists (link accounts)
+      const existing = await this.store.findUserByEmail(googleUser.email);
+      if (existing) {
+        user = await this.store.linkGoogleAccount(existing.id, googleUser.id, googleUser.picture ?? null) ?? existing;
+      } else {
+        // Generate unique username from Google display name
+        const baseName = googleUser.name
+          .replace(/[^a-zA-Z0-9]/g, "")
+          .slice(0, 18)
+          || "Player";
+        let username = baseName;
+        let attempt = 0;
+        while (await this.store.findUserByUsername(username)) {
+          attempt++;
+          username = `${baseName}${attempt}`;
+        }
+
+        user = await this.store.createGoogleUser({
+          googleId: googleUser.id,
+          email: googleUser.email,
+          username,
+          avatar: googleUser.picture ?? null,
+        });
+      }
+    }
+
+    return this.createSession(user, true);
   }
 
   private async createSession(user: StoredUser, rememberMe = false): Promise<AuthSession> {
@@ -221,6 +326,10 @@ export function createGuestProfile() {
     averageTimeMs: null,
     settings: null,
     statistics: null,
+    rating: 1200,
+    peakRating: 1200,
+    streak: 0,
+    seasonRating: 1200,
   };
 }
 
@@ -245,5 +354,9 @@ function toPublicProfile(user: StoredUser): PublicUserProfile {
     averageTimeMs: user.statistics.averageTimeMs,
     settings: user.settings,
     statistics: user.statistics,
+    rating: user.rating ?? 1200,
+    peakRating: user.peakRating ?? 1200,
+    streak: user.streak ?? 0,
+    seasonRating: user.seasonRating ?? 1200,
   };
 }

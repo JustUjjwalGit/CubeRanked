@@ -5,11 +5,10 @@ import { PNG } from "pngjs";
 test.describe("3D cube scene", () => {
   test("renders a nonblank interactive cube without layout overflow", async ({ page }, testInfo) => {
     await page.goto("/");
-    await page.getByRole("button", { name: "Play" }).click();
-    await page.getByRole("button", { name: /Practice/ }).click();
+    await page.locator(".lobby-mode-card", { hasText: "Practice" }).click();
     await expect(page.getByText("Generating Scramble...")).toBeVisible();
     await page.waitForSelector("canvas");
-    await expect(page.getByText("READY")).toBeVisible();
+    await expect(page.getByText("READY", { exact: true })).toBeVisible();
     await page.waitForTimeout(700);
 
     const canvas = page.locator("canvas").first();

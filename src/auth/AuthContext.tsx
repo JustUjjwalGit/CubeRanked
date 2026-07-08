@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   clearSessionTokens,
+  consumeOAuthRedirect,
   fetchProfile,
   getOAuthProvider,
   getStoredTokens,
@@ -16,12 +17,32 @@ import {
 } from "../lib/authApi";
 import type { SessionSettings } from "../lib/sessionStats";
 
+const GUEST_USERNAME_KEY = "cuberanked.guest.username";
+const FIRST_VISIT_KEY = "cuberanked.firstVisit";
+
 type AuthMode = "loading" | "guest" | "authenticated";
+
+function generateGuestUsername(): string {
+  const suffix = String(Math.floor(1_000 + Math.random() * 9_000));
+  return `Guest-${suffix}`;
+}
+
+function getOrCreateGuestUsername(): string {
+  const stored = localStorage.getItem(GUEST_USERNAME_KEY);
+  if (stored) return stored;
+  const name = generateGuestUsername();
+  localStorage.setItem(GUEST_USERNAME_KEY, name);
+  return name;
+}
 
 interface AuthContextValue {
   mode: AuthMode;
   user: UserProfile | null;
   error: string | null;
+  /** The persistent guest username (always available, even when authenticated) */
+  guestUsername: string;
+  /** True if this is the user's very first visit (no prior auth attempt) */
+  isFirstVisit: boolean;
   login: (input: { email: string; password: string; rememberMe: boolean }) => Promise<void>;
   register: (input: { username: string; email: string; password: string; rememberMe: boolean }) => Promise<void>;
   continueAsGuest: () => void;
@@ -30,7 +51,9 @@ interface AuthContextValue {
   syncSettings: (settings: SessionSettings) => Promise<void>;
   syncStatistics: (statistics: UserStatistics) => Promise<void>;
   startOAuth: (provider: "google" | "github" | "discord") => Promise<void>;
+  upgradeFromGuest: (method: "google" | "email") => void;
   clearError: () => void;
+  dismissFirstVisit: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -39,11 +62,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<AuthMode>("loading");
   const [user, setUser] = useState<UserProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [guestUsername] = useState<string>(getOrCreateGuestUsername);
+  const [isFirstVisit, setIsFirstVisit] = useState(() => {
+    return !localStorage.getItem(FIRST_VISIT_KEY);
+  });
+
+  const dismissFirstVisit = useCallback(() => {
+    localStorage.setItem(FIRST_VISIT_KEY, "1");
+    setIsFirstVisit(false);
+  }, []);
 
   useEffect(() => {
     let active = true;
 
     const boot = async () => {
+      // Handle OAuth redirect callback first
+      const oauthResult = consumeOAuthRedirect();
+      if (oauthResult?.type === "error") {
+        if (active) {
+          setError(oauthResult.message);
+          setMode("guest");
+          localStorage.setItem(FIRST_VISIT_KEY, "1");
+          setIsFirstVisit(false);
+        }
+        return;
+      }
+
+      // If oauth_session was consumed, tokens are now stored — fall through to refresh
       const tokens = getStoredTokens();
       if (!tokens.refreshToken) {
         if (active) setMode("guest");
@@ -56,6 +101,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (session) {
         setUser(session.user);
         setMode("authenticated");
+        localStorage.setItem(FIRST_VISIT_KEY, "1");
+        setIsFirstVisit(false);
       } else {
         setMode("guest");
       }
@@ -73,6 +120,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const session = await loginAccount(input);
     setUser(session.user);
     setMode("authenticated");
+    localStorage.setItem(FIRST_VISIT_KEY, "1");
+    setIsFirstVisit(false);
   }, []);
 
   const register = useCallback(async (input: { username: string; email: string; password: string; rememberMe: boolean }) => {
@@ -80,6 +129,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const session = await registerAccount(input);
     setUser(session.user);
     setMode("authenticated");
+    localStorage.setItem(FIRST_VISIT_KEY, "1");
+    setIsFirstVisit(false);
   }, []);
 
   const continueAsGuest = useCallback(() => {
@@ -87,6 +138,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setMode("guest");
     setError(null);
+    localStorage.setItem(FIRST_VISIT_KEY, "1");
+    setIsFirstVisit(false);
   }, []);
 
   const logout = useCallback(async () => {
@@ -132,8 +185,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    setError(`${provider[0].toUpperCase()}${provider.slice(1)} login is prepared but not configured yet.`);
+    setError(`${provider[0].toUpperCase()}${provider.slice(1)} login is prepared but not yet configured on this server.`);
   }, []);
+
+  // upgradeFromGuest triggers the appropriate auth flow for a guest wanting to create an account
+  const upgradeFromGuest = useCallback((method: "google" | "email") => {
+    if (method === "google") {
+      void startOAuth("google");
+    }
+    // For "email", the caller should open the auth dialog — this is just a signal
+  }, [startOAuth]);
 
   const clearError = useCallback(() => setError(null), []);
 
@@ -164,6 +225,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     mode,
     user,
     error,
+    guestUsername,
+    isFirstVisit,
     login,
     register,
     continueAsGuest,
@@ -172,11 +235,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     syncSettings,
     syncStatistics,
     startOAuth,
+    upgradeFromGuest,
     clearError,
+    dismissFirstVisit,
   }), [
     mode,
     user,
     error,
+    guestUsername,
+    isFirstVisit,
     login,
     register,
     continueAsGuest,
@@ -185,7 +252,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     syncSettings,
     syncStatistics,
     startOAuth,
+    upgradeFromGuest,
     clearError,
+    dismissFirstVisit,
   ]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

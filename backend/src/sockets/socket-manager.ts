@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Server } from "socket.io";
 import type { FastifyInstance } from "fastify";
 import { buildCorsOrigins } from "../config/cors.js";
+import { validateSolve } from "../cube/cube-validator.js";
 
 const SHARED_TEST_ROOM_ID = "shared-test-room";
 const MATCH_ROOM_PREFIX = "match:";
@@ -53,6 +54,8 @@ interface MatchPlayer {
   disconnectDeadlineAt: number | null;
   disconnectTimer: NodeJS.Timeout | null;
   playAgain: boolean;
+  flagged?: boolean;
+  cheatReasons?: string[];
 }
 
 interface RoomPlayer {
@@ -708,9 +711,50 @@ export function createSocketManager(app: FastifyInstance) {
         return;
       }
 
+      // Anti-Cheat validation foundation hook
+      const cheatFlags: string[] = [];
+      const elapsedMs = Date.now() - match.startedAt;
+
+      // 1. Solve completion & scramble consistency check
+      const isSolved = validateSolve(match.scramble, player.moves);
+      if (!isSolved) {
+        cheatFlags.push("INVALID_SOLVE_STATE");
+      }
+
+      // 2. Impossible timestamps
+      if (elapsedMs < 900) {
+        cheatFlags.push("IMPOSSIBLE_TIME");
+      }
+
+      // 3. Move count consistency
+      if (player.moves.length < 5) {
+        cheatFlags.push("TOO_FEW_MOVES");
+      }
+
+      // 4. Impossible TPS
+      const tps = player.moves.length / Math.max(elapsedMs / 1_000, 0.001);
+      if (tps > 32) {
+        cheatFlags.push("IMPOSSIBLE_TPS");
+      }
+
+      if (cheatFlags.length > 0) {
+        app.log.warn({
+          matchId: match.id,
+          clientId: player.clientId,
+          username: player.username,
+          cheatFlags,
+          moves: player.moves,
+          timeMs: elapsedMs,
+          tps,
+        }, "Anti-Cheat Hook: Suspicious solve flagged");
+        
+        player.flagged = true;
+        player.cheatReasons = cheatFlags;
+      }
+
       player.status = "finished";
       player.moveCount = Math.max(player.moveCount, payload.moveCount);
-      player.finalTimeMs = Date.now() - match.startedAt;
+      player.finalTimeMs = elapsedMs;
       player.tps = player.moveCount / Math.max(player.finalTimeMs / 1_000, 0.001);
       emitMatchState(match);
       finishMatchIfReady(match);

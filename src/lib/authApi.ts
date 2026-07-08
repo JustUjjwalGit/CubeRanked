@@ -37,6 +37,10 @@ export interface UserProfile {
   averageTimeMs: number | null;
   settings: SessionSettings;
   statistics: UserStatistics;
+  rating?: number;
+  peakRating?: number;
+  streak?: number;
+  seasonRating?: number;
 }
 
 export interface AuthSession {
@@ -71,6 +75,44 @@ export function clearSessionTokens() {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem(EXPIRES_AT_KEY);
+}
+
+/**
+ * Called on app startup to check if the URL contains an OAuth session or error
+ * from the server callback redirect. Clears the URL params after consuming them.
+ * Returns 'session' if tokens were stored, 'error' if there was an error, or null.
+ */
+export function consumeOAuthRedirect(): { type: "session" } | { type: "error"; message: string } | null {
+  const params = new URLSearchParams(window.location.search);
+  const sessionParam = params.get("oauth_session");
+  const errorParam = params.get("oauth_error");
+
+  if (sessionParam || errorParam) {
+    // Clean the URL immediately
+    const cleanUrl = window.location.pathname + window.location.hash;
+    window.history.replaceState({}, document.title, cleanUrl);
+  }
+
+  if (sessionParam) {
+    try {
+      const sessionParams = new URLSearchParams(decodeURIComponent(sessionParam));
+      const accessToken = sessionParams.get("accessToken");
+      const refreshToken = sessionParams.get("refreshToken");
+      const accessTokenExpiresAt = sessionParams.get("accessTokenExpiresAt");
+      if (accessToken && refreshToken && accessTokenExpiresAt) {
+        storeSessionTokens({ accessToken, refreshToken, accessTokenExpiresAt } as AuthSession);
+        return { type: "session" };
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  if (errorParam) {
+    return { type: "error", message: decodeURIComponent(errorParam) };
+  }
+
+  return null;
 }
 
 export async function registerAccount(input: {

@@ -38,6 +38,12 @@ export interface StoredUser {
   statistics: StoredStatistics;
   createdAt: string;
   updatedAt: string;
+  googleId?: string;
+  provider?: "email" | "google";
+  rating?: number;
+  peakRating?: number;
+  streak?: number;
+  seasonRating?: number;
 }
 
 export interface StoredRefreshToken {
@@ -106,6 +112,11 @@ export class UserStore {
     return data.users.find((user) => user.username.toLowerCase() === normalizedUsername) ?? null;
   }
 
+  async findUserByGoogleId(googleId: string): Promise<StoredUser | null> {
+    const data = await this.read();
+    return data.users.find((user) => user.googleId === googleId) ?? null;
+  }
+
   async createUser(input: {
     username: string;
     email: string;
@@ -128,9 +139,61 @@ export class UserStore {
         statistics: { ...DEFAULT_STATISTICS, practiceHistory: [] },
         createdAt: now,
         updatedAt: now,
+        rating: 1200,
+        peakRating: 1200,
+        streak: 0,
+        seasonRating: 1200,
       };
 
       data.users.push(user);
+      return user;
+    });
+  }
+
+  async createGoogleUser(input: {
+    googleId: string;
+    email: string;
+    username: string;
+    avatar: string | null;
+  }): Promise<StoredUser> {
+    return this.write((data) => {
+      const now = new Date().toISOString();
+      const user: StoredUser = {
+        id: randomUUID(),
+        username: input.username,
+        email: normalizeEmail(input.email),
+        passwordHash: "",
+        avatar: input.avatar,
+        country: null,
+        bio: "",
+        theme: "dark",
+        favoriteMode: "Practice",
+        status: "online",
+        settings: { ...DEFAULT_SETTINGS },
+        statistics: { ...DEFAULT_STATISTICS, practiceHistory: [] },
+        createdAt: now,
+        updatedAt: now,
+        googleId: input.googleId,
+        provider: "google",
+        rating: 1200,
+        peakRating: 1200,
+        streak: 0,
+        seasonRating: 1200,
+      };
+
+      data.users.push(user);
+      return user;
+    });
+  }
+
+  async linkGoogleAccount(userId: string, googleId: string, avatar: string | null): Promise<StoredUser | null> {
+    return this.write((data) => {
+      const user = data.users.find((item) => item.id === userId);
+      if (!user) return null;
+      user.googleId = googleId;
+      user.provider = "google";
+      if (avatar && !user.avatar) user.avatar = avatar;
+      user.updatedAt = new Date().toISOString();
       return user;
     });
   }

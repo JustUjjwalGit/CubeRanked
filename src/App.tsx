@@ -28,9 +28,15 @@ import {
   Users,
   Wifi,
   X,
+  Award,
+  Zap,
+  Globe,
 } from "lucide-react";
-import { useCallback, useEffect, useReducer, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import CubeScene from "./components/cube/CubeScene";
+import AppBackground from "./components/AppBackground";
+import IdentityScreen from "./components/IdentityScreen";
+import RankedGateModal from "./components/RankedGateModal";
 import { makeMove, MOVE_FACES, parseMove, type Face } from "./lib/cubeEngine";
 import { useBackendHealth } from "./hooks/useBackendHealth";
 import { useSocketConnection } from "./hooks/useSocketConnection";
@@ -55,6 +61,8 @@ import {
   type SessionSettings,
   type SolveRecord,
 } from "./lib/sessionStats";
+import { saveReplay, getLocalReplays } from "./lib/replay";
+import { calculateLifetimeStats } from "./lib/statsEngine";
 import {
   gameStateReducer,
   initialGameState,
@@ -147,6 +155,26 @@ export default function App() {
   const [solveMoveCount, setSolveMoveCount] = useState(0);
   const [copyLabel, setCopyLabel] = useState("Copy Scramble");
   const [notice, setNotice] = useState<string | null>(null);
+  const replayMovesRef = useRef<Array<{ move: string; timeOffsetMs: number }>>([]);
+  const countdownIntervalRef = useRef<number | null>(null);
+  const countdownTimeoutRef = useRef<number | null>(null);
+  const noticeTimeoutRef = useRef<number | null>(null);
+  const [lifetimeStats, setLifetimeStats] = useState(() => calculateLifetimeStats(getLocalReplays()));
+
+  const showNotice = useCallback((text: string, durationMs?: number) => {
+    setNotice(text);
+    if (noticeTimeoutRef.current !== null) {
+      window.clearTimeout(noticeTimeoutRef.current);
+      noticeTimeoutRef.current = null;
+    }
+    if (durationMs !== undefined) {
+      noticeTimeoutRef.current = window.setTimeout(() => {
+        setNotice(null);
+        noticeTimeoutRef.current = null;
+      }, durationMs);
+    }
+  }, []);
+
   const [lastSolve, setLastSolve] = useState<SolveRecord | null>(null);
   const [lastSolveIsPersonalBest, setLastSolveIsPersonalBest] = useState(false);
   const [countdownValue, setCountdownValue] = useState("3");
@@ -162,6 +190,7 @@ export default function App() {
   const [onlinePlayers, setOnlinePlayers] = useState<MatchPlayerSnapshot[]>([]);
   const [onlineResult, setOnlineResult] = useState<OnlineRaceResult | null>(null);
   const [authModal, setAuthModal] = useState<AuthModal>("none");
+  const [rankedGateOpen, setRankedGateOpen] = useState(false);
   const solveStartRef = useRef(0);
   const inspectionStartRef = useRef(0);
   const pausedAtRef = useRef<number | null>(null);
@@ -174,6 +203,76 @@ export default function App() {
   const backendHealth = useBackendHealth();
   const socketSnapshot = useSocketConnection();
   const auth = useAuth();
+
+  const guestProfile = useMemo<UserProfile>(() => {
+    const validSolves = solveHistory.filter(s => s.finalTimeMs !== null);
+    const pbTime = validSolves.length > 0 ? Math.min(...validSolves.map(s => s.finalTimeMs!)) : null;
+    return {
+      id: "guest",
+      username: auth.guestUsername,
+      email: "",
+      avatar: null,
+      country: null,
+      bio: "Local Guest Profile. Upgrade to unlock competitive ranks!",
+      theme: settings.theme,
+      favoriteMode: "Practice",
+      status: "online",
+      joinDate: new Date().toISOString(),
+      gamesPlayed: 0,
+      wins: 0,
+      losses: 0,
+      botWins: botRaceStats.wins,
+      botLosses: botRaceStats.losses,
+      bestTimeMs: pbTime,
+      averageTimeMs: null,
+      settings,
+      statistics: {
+        gamesPlayed: 0,
+        wins: 0,
+        losses: 0,
+        botWins: botRaceStats.wins,
+        botLosses: botRaceStats.losses,
+        bestTimeMs: pbTime,
+        averageTimeMs: null,
+        practiceHistory: solveHistory,
+      }
+    };
+  }, [auth.guestUsername, settings, solveHistory, botRaceStats]);
+
+  // Automatically merge local guest data when upgrading to an authenticated account
+  const prevAuthModeRef = useRef(auth.mode);
+  useEffect(() => {
+    const prevMode = prevAuthModeRef.current;
+    const currentMode = auth.mode;
+    prevAuthModeRef.current = currentMode;
+
+    if (prevMode === "guest" && currentMode === "authenticated" && auth.user) {
+      // 1. Transfer Settings (Keybindings, HUD, animations)
+      void auth.syncSettings(settings).catch(console.error);
+
+      // 2. Transfer Statistics (Practice PBs, Bot stats)
+      const validSolves = solveHistory.filter(s => s.finalTimeMs !== null);
+      const pbTime = validSolves.length > 0 ? Math.min(...validSolves.map(s => s.finalTimeMs!)) : null;
+
+      const mergedStats = {
+        gamesPlayed: auth.user.statistics?.gamesPlayed || 0,
+        wins: auth.user.statistics?.wins || 0,
+        losses: auth.user.statistics?.losses || 0,
+        botWins: Math.max(auth.user.statistics?.botWins || 0, botRaceStats.wins),
+        botLosses: Math.max(auth.user.statistics?.botLosses || 0, botRaceStats.losses),
+        bestTimeMs: pbTime !== null 
+          ? (auth.user.statistics?.bestTimeMs !== null 
+              ? Math.min(auth.user.statistics!.bestTimeMs!, pbTime) 
+              : pbTime)
+          : (auth.user.statistics?.bestTimeMs || null),
+        averageTimeMs: auth.user.statistics?.averageTimeMs || null,
+        practiceHistory: solveHistory.slice(0, 50),
+      };
+
+      void auth.syncStatistics(mergedStats).catch(console.error);
+      showNotice("Guest local profile, settings and statistics merged successfully!", 3000);
+    }
+  }, [auth.mode, auth.user, settings, solveHistory, botRaceStats, showNotice]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -227,9 +326,8 @@ export default function App() {
   }, []);
 
   const handleAuthError = useCallback((error: unknown) => {
-    setNotice(error instanceof Error ? error.message : "Authentication failed");
-    window.setTimeout(() => setNotice(null), 2_200);
-  }, []);
+    showNotice(error instanceof Error ? error.message : "Authentication failed", 2200);
+  }, [showNotice]);
 
   const resetSolveState = useCallback((targetScramble = scramble) => {
     setCubeFromScramble(targetScramble);
@@ -290,12 +388,17 @@ export default function App() {
   }, [setCubeFromScramble]);
 
   const enterRankedQueue = useCallback(() => {
+    // Gate guests — must be authenticated to enter ranked
+    if (auth.mode === "guest") {
+      setRankedGateOpen(true);
+      return;
+    }
     setQueueUpdate({ status: "searching", queuePosition: null, elapsedMs: 0, estimatedWaitMs: 8_000 });
     setOnlineMatch(null);
     setOnlineResult(null);
     socketManager.joinQueue();
     dispatch({ type: "SELECT_RANKED" });
-  }, []);
+  }, [auth.mode]);
 
   const cancelRankedQueue = useCallback(() => {
     socketManager.cancelQueue();
@@ -378,9 +481,30 @@ export default function App() {
     setBotRaceStats((current) => winner === "you"
       ? { ...current, wins: current.wins + 1 }
       : { ...current, losses: current.losses + 1 });
+
+    const matchId = `bot-${Date.now()}`;
+    const inspectionTimeMs = inspectionStartRef.current > 0 && solveStartRef.current > 0
+      ? Math.max(0, Math.round(solveStartRef.current - inspectionStartRef.current))
+      : 0;
+    saveReplay({
+      replayId: `replay-${matchId}`,
+      matchId,
+      gameMode: "bot-race",
+      scramble,
+      startedAt: new Date().toISOString(),
+      durationMs: playerTimeMs,
+      inspectionTimeMs,
+      penalty,
+      result: penalty === "DNF" ? "DNF" : "SOLVED",
+      won: winner === "you",
+      puzzle: "3x3",
+      moves: [...replayMovesRef.current],
+    });
+    setLifetimeStats(calculateLifetimeStats(getLocalReplays()));
+
     solveStartRef.current = 0;
     dispatch({ type: "SOLVE_COMPLETE" });
-  }, [botOpponent, penalty, solveMoveCount]);
+  }, [botOpponent, penalty, scramble, solveMoveCount]);
 
   const finishSolve = useCallback((finalElapsedMs: number) => {
     if (isRanked && onlineMatch) {
@@ -412,6 +536,25 @@ export default function App() {
       record.finalTimeMs !== null && (!bestBefore || record.finalTimeMs < bestBefore.finalTimeMs!),
     );
     setSolveHistory((current) => [record, ...current].slice(0, 120));
+
+    const inspectionTimeMs = inspectionStartRef.current > 0 && solveStartRef.current > 0
+      ? Math.max(0, Math.round(solveStartRef.current - inspectionStartRef.current))
+      : 0;
+    saveReplay({
+      replayId: `replay-${record.id}`,
+      matchId: record.id,
+      gameMode: "practice",
+      scramble,
+      startedAt: new Date().toISOString(),
+      durationMs: record.finalTimeMs ?? finalElapsedMs,
+      inspectionTimeMs,
+      penalty,
+      result: penalty === "DNF" ? "DNF" : "SOLVED",
+      puzzle: "3x3",
+      moves: [...replayMovesRef.current],
+    });
+    setLifetimeStats(calculateLifetimeStats(getLocalReplays()));
+
     setElapsedMs(finalElapsedMs);
     solveStartRef.current = 0;
     audioManager.playSolveComplete();
@@ -434,6 +577,7 @@ export default function App() {
 
     if (stage !== "PLAYING") {
       solveStartRef.current = performance.now();
+      replayMovesRef.current = [];
       setElapsedMs(0);
       setSolveMoveCount(0);
       dispatch({ type: "FIRST_MOVE" });
@@ -450,6 +594,13 @@ export default function App() {
     const move = makeMove(face, modeOverride ?? turnMode);
     setSolveMoveCount((current) => (stage === "PLAYING" ? current + 1 : 1));
     enqueuePracticeMove(move);
+
+    const solveStartedJustNow = stage !== "PLAYING";
+    const timeOffsetMs = solveStartedJustNow ? 0 : (solveStartRef.current > 0 ? (performance.now() - solveStartRef.current) : 0);
+    replayMovesRef.current.push({
+      move: move.notation,
+      timeOffsetMs: Math.round(timeOffsetMs),
+    });
     if (isRanked && onlineMatch) {
       socketManager.sendMatchMove(onlineMatch.matchId, move.notation);
     } else if (!isBotRace) {
@@ -754,6 +905,15 @@ export default function App() {
       }
     });
     const unsubscribeCountdown = socketManager.onMatchEvent("countdown", (payload) => {
+      if (countdownIntervalRef.current !== null) {
+        window.clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
+      if (countdownTimeoutRef.current !== null) {
+        window.clearTimeout(countdownTimeoutRef.current);
+        countdownTimeoutRef.current = null;
+      }
+
       serverClockOffsetRef.current = Date.now() - payload.serverNow;
       dispatch({ type: "START_COUNTDOWN" });
       setCountdownValue("3");
@@ -779,7 +939,15 @@ export default function App() {
 
       updateCountdown();
       const interval = window.setInterval(updateCountdown, 100);
-      window.setTimeout(() => window.clearInterval(interval), payload.countdownMs + 700);
+      countdownIntervalRef.current = interval;
+
+      const timeout = window.setTimeout(() => {
+        window.clearInterval(interval);
+        if (countdownIntervalRef.current === interval) {
+          countdownIntervalRef.current = null;
+        }
+      }, payload.countdownMs + 700);
+      countdownTimeoutRef.current = timeout;
     });
     const unsubscribeStart = socketManager.onMatchEvent("start", (payload) => {
       serverClockOffsetRef.current = Date.now() - payload.serverNow;
@@ -868,6 +1036,24 @@ export default function App() {
         }
       }
 
+      if (you) {
+        saveReplay({
+          replayId: `replay-${payload.matchId}`,
+          matchId: payload.matchId,
+          gameMode: gameMode === "private" ? "private" : "ranked",
+          scramble,
+          startedAt: new Date().toISOString(),
+          durationMs: you.finalTimeMs ?? 0,
+          inspectionTimeMs: 0,
+          penalty: you.status === "forfeit" ? "DNF" : "none",
+          result: you.status === "finished" ? "SOLVED" : you.status === "forfeit" ? "QUIT" : "DNF",
+          won: payload.winnerClientId === socketSnapshot.clientId,
+          puzzle: "3x3",
+          moves: [...replayMovesRef.current],
+        });
+        setLifetimeStats(calculateLifetimeStats(getLocalReplays()));
+      }
+
       setOnlineResult(result);
       setRaceResult(resultToRaceResult(result));
       setElapsedMs(you?.finalTimeMs ?? elapsedMs);
@@ -875,6 +1061,12 @@ export default function App() {
     });
 
     return () => {
+      if (countdownIntervalRef.current !== null) {
+        window.clearInterval(countdownIntervalRef.current);
+      }
+      if (countdownTimeoutRef.current !== null) {
+        window.clearTimeout(countdownTimeoutRef.current);
+      }
       unsubscribeQueue();
       unsubscribeFound();
       unsubscribeResume();
@@ -889,6 +1081,61 @@ export default function App() {
       unsubscribeResults();
     };
   }, [applyOnlineMatch, elapsedMs, socketSnapshot.clientId]);
+
+  // Network recovery & cleanup effect
+  const [reconnectCountdown, setReconnectCountdown] = useState<number | null>(null);
+  const prevConnectionStateRef = useRef<SocketConnectionState>(socketSnapshot.connectionState);
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimeoutRef.current !== null) {
+        window.clearTimeout(noticeTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const prev = prevConnectionStateRef.current;
+    const current = socketSnapshot.connectionState;
+    prevConnectionStateRef.current = current;
+
+    if (prev !== "connected" && current === "connected") {
+      if (stage === "MATCHMAKING") {
+        socketManager.joinQueue();
+        showNotice("Reconnected! Restoring queue state...", 2000);
+      }
+    }
+  }, [socketSnapshot.connectionState, stage, showNotice]);
+
+  useEffect(() => {
+    const isMultiplayerActive = (gameMode === "ranked" || gameMode === "private") &&
+      (stage === "COUNTDOWN" || stage === "READY" || stage === "INSPECTION" || stage === "PLAYING");
+
+    if (isMultiplayerActive && socketSnapshot.connectionState !== "connected") {
+      if (reconnectCountdown === null) {
+        setReconnectCountdown(30);
+        showNotice("Connection lost! Attempting to reconnect...", 2000);
+      }
+    } else {
+      setReconnectCountdown(null);
+    }
+  }, [socketSnapshot.connectionState, stage, gameMode, reconnectCountdown, showNotice]);
+
+  useEffect(() => {
+    if (reconnectCountdown === null) return;
+    if (reconnectCountdown <= 0) {
+      showNotice("Connection recovery failed. Forfeiting match...", 3000);
+      setReconnectCountdown(null);
+      returnHome();
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setReconnectCountdown((prev) => (prev !== null ? prev - 1 : null));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [reconnectCountdown, showNotice]);
 
   useEffect(() => {
     return socketManager.onRemoteMove((payload) => {
@@ -1178,64 +1425,86 @@ export default function App() {
 
   return (
     <main className="client-shell">
+      {/* First-run identity chooser screen */}
       <AnimatePresence mode="wait">
-        {stage === "HOME" || stage === "MODE_SELECT" ? (
-          <HomeScreen
-            key="home"
-            connectionState={socketSnapshot.connectionState}
-            onlineCount={socketSnapshot.onlineCount}
-            authMode={auth.mode}
-            user={auth.user}
-            onSettings={() => dispatch({ type: "OPEN_APP_SETTINGS" })}
-            onLogin={() => setAuthModal("login")}
-            onRegister={() => setAuthModal("register")}
-            onGuest={auth.continueAsGuest}
-            onProfile={() => setAuthModal(auth.mode === "authenticated" ? "profile" : "login")}
-            onLogout={() => void auth.logout().catch(handleAuthError)}
-            onPractice={() => dispatch({ type: "SELECT_PRACTICE" })}
-            onBotRace={() => dispatch({ type: "SELECT_BOT_RACE" })}
-            onRanked={enterRankedQueue}
-            onPrivate={() => dispatch({ type: "SELECT_PRIVATE" })}
+        {auth.isFirstVisit && auth.mode !== "loading" ? (
+          <IdentityScreen
+            key="identity"
+            onGuest={() => {
+              auth.continueAsGuest();
+            }}
+            onGoogle={() => {
+              auth.dismissFirstVisit();
+              void auth.startOAuth("google");
+            }}
+            onEmail={() => {
+              auth.dismissFirstVisit();
+              setAuthModal("login");
+            }}
           />
-        ) : stage === "MATCHMAKING" ? (
-          <QueueScreen
-            key="queue"
-            queue={queueUpdate}
-            connectionState={socketSnapshot.connectionState}
-            onCancel={cancelRankedQueue}
-          />
-        ) : stage === "PRIVATE_LOBBY" ? (
-          <PrivateLobbyScreen
-            key="private-lobby"
-            roomState={socketSnapshot.roomState}
-            roomError={socketSnapshot.roomError}
-            clientId={socketSnapshot.clientId}
-            onBack={returnHome}
-          />
-        ) : stage === "MATCH_LOADING" ? (
-          <LoadingScreen key={`loading-${gameState.loadingId}`} mode={gameMode ?? "practice"} opponent={onlineMatch?.opponent?.username ?? null} />
-        ) : (
-          <PracticeScreen
-            key="practice"
-            stage={stage}
-            mode={gameMode ?? "practice"}
-            elapsedMs={elapsedMs}
-            inspectionRemaining={inspectionRemaining}
-            penalty={penalty}
-            settings={settings}
-            connectionState={socketSnapshot.connectionState}
-            pingMs={socketSnapshot.pingMs}
-            opponent={gameMode === "bot-race" ? botOpponent : onlineOpponent}
-            opponentCube={gameMode === "bot-race" ? opponentCube : onlineOpponentCube}
-            botRaceStats={botRaceStats}
-            countdownValue={countdownValue}
-            onOpponentFrame={gameMode === "bot-race" ? tickOpponentCube : tickOnlineOpponentCube}
-            onHome={returnHome}
-            onSettings={() => dispatch({ type: "OPEN_PRACTICE_SETTINGS" })}
-            effectiveInspectionEnabled={effectiveInspectionEnabled}
-          />
-        )}
+        ) : null}
       </AnimatePresence>
+
+      {(!auth.isFirstVisit || auth.mode === "loading") && (
+        <AnimatePresence mode="wait">
+          {stage === "HOME" || stage === "MODE_SELECT" ? (
+            <HomeScreen
+              key="home"
+              connectionState={socketSnapshot.connectionState}
+              onlineCount={socketSnapshot.onlineCount}
+              authMode={auth.mode}
+              user={auth.user}
+              onSettings={() => dispatch({ type: "OPEN_APP_SETTINGS" })}
+              onLogin={() => setAuthModal("login")}
+              onRegister={() => setAuthModal("register")}
+              onGuest={auth.continueAsGuest}
+              onProfile={() => setAuthModal(auth.mode === "authenticated" ? "profile" : "login")}
+              onLogout={() => void auth.logout().catch(handleAuthError)}
+              onPractice={() => dispatch({ type: "SELECT_PRACTICE" })}
+              onBotRace={() => dispatch({ type: "SELECT_BOT_RACE" })}
+              onRanked={enterRankedQueue}
+              onPrivate={() => dispatch({ type: "SELECT_PRIVATE" })}
+            />
+          ) : stage === "MATCHMAKING" ? (
+            <QueueScreen
+              key="queue"
+              queue={queueUpdate}
+              connectionState={socketSnapshot.connectionState}
+              onCancel={cancelRankedQueue}
+            />
+          ) : stage === "PRIVATE_LOBBY" ? (
+            <PrivateLobbyScreen
+              key="private-lobby"
+              roomState={socketSnapshot.roomState}
+              roomError={socketSnapshot.roomError}
+              clientId={socketSnapshot.clientId}
+              onBack={returnHome}
+            />
+          ) : stage === "MATCH_LOADING" ? (
+            <LoadingScreen key={`loading-${gameState.loadingId}`} mode={gameMode ?? "practice"} opponent={onlineMatch?.opponent?.username ?? null} />
+          ) : (
+            <PracticeScreen
+              key="practice"
+              stage={stage}
+              mode={gameMode ?? "practice"}
+              elapsedMs={elapsedMs}
+              inspectionRemaining={inspectionRemaining}
+              penalty={penalty}
+              settings={settings}
+              connectionState={socketSnapshot.connectionState}
+              pingMs={socketSnapshot.pingMs}
+              opponent={gameMode === "bot-race" ? botOpponent : onlineOpponent}
+              opponentCube={gameMode === "bot-race" ? opponentCube : onlineOpponentCube}
+              botRaceStats={botRaceStats}
+              countdownValue={countdownValue}
+              onOpponentFrame={gameMode === "bot-race" ? tickOpponentCube : tickOnlineOpponentCube}
+              onHome={returnHome}
+              onSettings={() => dispatch({ type: "OPEN_PRACTICE_SETTINGS" })}
+              effectiveInspectionEnabled={effectiveInspectionEnabled}
+            />
+          )}
+        </AnimatePresence>
+      )}
 
       <AnimatePresence>
         {stage === "MODE_SELECT" ? (
@@ -1354,19 +1623,42 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {authModal === "profile" && auth.user ? (
+        {authModal === "profile" && (auth.user || auth.mode === "guest") ? (
           <ProfileDialog
-            user={auth.user}
+            user={auth.user ?? guestProfile}
             onClose={() => setAuthModal("none")}
             onSave={async (patch) => {
+              if (auth.mode === "guest") return; // guests cannot save profile changes to cloud
               if (patch.theme) {
                 updateSettings({ theme: patch.theme });
               }
               await auth.updateProfile(patch);
             }}
             onLogout={() => {
-              void auth.logout().catch(handleAuthError);
+              if (auth.mode === "authenticated") {
+                void auth.logout().catch(handleAuthError);
+              }
               setAuthModal("none");
+            }}
+          />
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {rankedGateOpen ? (
+          <RankedGateModal
+            onClose={() => setRankedGateOpen(false)}
+            onGoogle={() => {
+              setRankedGateOpen(false);
+              void auth.startOAuth("google");
+            }}
+            onEmail={() => {
+              setRankedGateOpen(false);
+              setAuthModal("login");
+            }}
+            onRegister={() => {
+              setRankedGateOpen(false);
+              setAuthModal("register");
             }}
           />
         ) : null}
@@ -1390,6 +1682,46 @@ export default function App() {
           <DeveloperOverlay snapshot={socketSnapshot} />
         ) : null}
       </AnimatePresence>
+
+      {reconnectCountdown !== null && (
+        <div className="reconnect-overlay-new" style={{
+          position: "fixed",
+          inset: 0,
+          backgroundColor: "rgba(3, 3, 5, 0.9)",
+          backdropFilter: "blur(8px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 10000,
+        }}>
+          <div className="reconnect-dialog-new" style={{
+            background: "#09090b",
+            border: "1px solid #1e1b4b",
+            borderRadius: "16px",
+            padding: "32px",
+            textAlign: "center",
+            maxWidth: "400px",
+            width: "90%",
+            boxShadow: "0 0 40px rgba(99, 102, 241, 0.15)",
+          }}>
+            <Loader2 className="loading-spinner animate-spin" size={36} style={{ color: "#818cf8", margin: "0 auto 16px auto" }} />
+            <h3 style={{ fontSize: "20px", fontWeight: 700, color: "#f4f4f5", marginBottom: "8px" }}>Connection Interrupted</h3>
+            <p style={{ fontSize: "14px", color: "#a1a1aa", marginBottom: "20px" }}>
+              Attempting to restore connection to match...
+            </p>
+            <div style={{
+              background: "#18181b",
+              borderRadius: "8px",
+              padding: "12px",
+              fontSize: "15px",
+              fontWeight: 700,
+              color: "#818cf8",
+            }}>
+              Reconnect Window: {reconnectCountdown}s
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -1433,8 +1765,8 @@ function HomeScreen({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.28 }}
     >
-      <div className="home-bg">
-        <div className="client-grid" />
+      <AppBackground />
+      <div style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 1 }}>
         <motion.div
           className="brand-orbit"
           animate={{ rotate: 360 }}
@@ -1444,11 +1776,7 @@ function HomeScreen({
 
       <header className="home-topbar-new">
         <div className="launcher-brand-new">
-          <Gamepad2 size={24} className="brand-logo" />
-          <div className="brand-text">
-            <h2>CubeRanked</h2>
-            <span>Speed & Skill</span>
-          </div>
+          <img src="/logos/CubeRankedLogosFull.png" alt="CubeRanked" style={{ height: "42px", width: "auto", objectFit: "contain" }} />
         </div>
 
         <div className="top-right-actions">
@@ -1595,9 +1923,7 @@ function LoadingScreen({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.28 }}
     >
-      <div className="home-bg">
-        <div className="client-grid" />
-      </div>
+      <AppBackground />
       <motion.div
         className="loading-card"
         initial={{ y: 18, opacity: 0, scale: 0.97 }}
@@ -1605,7 +1931,6 @@ function LoadingScreen({
         exit={{ y: -12, opacity: 0, scale: 0.98 }}
         transition={{ type: "spring", stiffness: 160, damping: 22 }}
       >
-        <img src="/CubeRankedLogo.png" alt="CubeRanked" />
         <Loader2 className="loading-spinner" size={28} aria-hidden="true" />
         <span>{status}</span>
         {mode === "ranked" ? <small>Loading cube... Synchronizing...</small> : null}
@@ -1642,9 +1967,7 @@ function QueueScreen({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.28 }}
     >
-      <div className="home-bg">
-        <div className="client-grid" />
-      </div>
+      <AppBackground />
       <motion.div
         className="queue-card"
         initial={{ y: 18, opacity: 0, scale: 0.97 }}
@@ -1652,7 +1975,6 @@ function QueueScreen({
         exit={{ y: -12, opacity: 0, scale: 0.98 }}
         transition={{ type: "spring", stiffness: 160, damping: 22 }}
       >
-        <img src="/CubeRankedLogo.png" alt="CubeRanked" />
         <div className="search-orbit">
           <Loader2 className="loading-spinner" size={30} aria-hidden="true" />
         </div>
@@ -1822,9 +2144,7 @@ function PrivateLobbyScreen({ roomState, roomError, clientId, onBack }: PrivateL
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div className="home-bg">
-          <div className="client-grid" />
-        </div>
+        <AppBackground />
 
         <div className="setup-container">
           <header className="setup-header">
@@ -1887,9 +2207,7 @@ function PrivateLobbyScreen({ roomState, roomError, clientId, onBack }: PrivateL
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
     >
-      <div className="home-bg">
-        <div className="client-grid" />
-      </div>
+      <AppBackground />
 
       <div className="lobby-container">
         <header className="lobby-header">
@@ -3144,6 +3462,8 @@ function AuthDialog({
   );
 }
 
+
+
 function ProfileDialog({
   user,
   onClose,
@@ -3155,6 +3475,8 @@ function ProfileDialog({
   onSave: (patch: Partial<Pick<UserProfile, "username" | "avatar" | "country" | "bio" | "theme" | "favoriteMode">>) => Promise<void>;
   onLogout: () => void;
 }) {
+  const isGuest = user.id === "guest";
+  const auth = useAuth();
   const [draft, setDraft] = useState({
     username: user.username,
     avatar: user.avatar ?? "",
@@ -3173,6 +3495,7 @@ function ProfileDialog({
       // ignore
     }
   }, []);
+
   const originalKey = JSON.stringify({
     username: user.username,
     avatar: user.avatar ?? "",
@@ -3184,7 +3507,7 @@ function ProfileDialog({
   const draftKey = JSON.stringify(draft);
 
   useEffect(() => {
-    if (draftKey === originalKey) {
+    if (isGuest || draftKey === originalKey) {
       return;
     }
 
@@ -3197,7 +3520,26 @@ function ProfileDialog({
     }, 700);
 
     return () => window.clearTimeout(timeout);
-  }, [draft, draftKey, onSave, originalKey]);
+  }, [draft, draftKey, onSave, originalKey, isGuest]);
+
+  // Rank badge styling helper
+  const getRankInfo = (rating: number) => {
+    if (rating < 1000) return { name: "Unranked", color: "#64748b", badge: "UR" };
+    if (rating < 1200) return { name: "Bronze", color: "#b45309", badge: "BR" };
+    if (rating < 1400) return { name: "Silver", color: "#94a3b8", badge: "SV" };
+    if (rating < 1600) return { name: "Gold", color: "#d97706", badge: "GD" };
+    if (rating < 1800) return { name: "Platinum", color: "#0d9488", badge: "PL" };
+    if (rating < 2000) return { name: "Diamond", color: "#2563eb", badge: "DM" };
+    return { name: "Master", color: "#7c3aed", badge: "MS" };
+  };
+
+  const ratingVal = user.rating ?? 1200;
+  const rankInfo = getRankInfo(ratingVal);
+  const winRate = user.gamesPlayed > 0 ? Math.round((user.wins / user.gamesPlayed) * 100) : 0;
+
+  // Recalculate lifetime stats for guest PB & TPS display
+  const localReplays = getLocalReplays();
+  const stats = calculateLifetimeStats(localReplays);
 
   return (
     <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -3210,7 +3552,7 @@ function ProfileDialog({
       >
         <div className="modal-head">
           <div>
-            <span>Profile</span>
+            <span>{isGuest ? "Temporary Profile" : "Profile"}</span>
             <h2>{user.username}</h2>
           </div>
           <button type="button" onClick={onClose} aria-label="Close profile">
@@ -3218,48 +3560,152 @@ function ProfileDialog({
           </button>
         </div>
 
+        {isGuest ? (
+          <div className="guest-upgrade-banner" style={{
+            background: "linear-gradient(135deg, rgba(67, 56, 202, 0.2) 0%, rgba(99, 102, 241, 0.1) 100%)",
+            border: "1px solid rgba(99, 102, 241, 0.3)",
+            borderRadius: "16px",
+            padding: "20px",
+            marginBottom: "20px",
+            textAlign: "center",
+          }}>
+            <h4 style={{ margin: "0 0 8px 0", color: "#f1f5f9", fontWeight: 800 }}>Upgrade to persistent profile</h4>
+            <p style={{ margin: "0 0 16px 0", fontSize: "0.8rem", color: "#94a3b8", lineHeight: 1.4 }}>
+              Register or sign in with Google to save your competitive Elo rating, match history, and unlock custom profiles. Your local practice statistics will automatically merge!
+            </p>
+            <div style={{ display: "flex", gap: "10px", justifyContent: "center" }}>
+              <button
+                type="button"
+                className="ranked-gate-btn google"
+                onClick={() => {
+                  onClose();
+                  void auth.startOAuth("google");
+                }}
+                style={{ width: "auto", minHeight: "36px", padding: "0 16px", fontSize: "0.8rem" }}
+              >
+                Sign Up with Google
+              </button>
+              <button
+                type="button"
+                className="ranked-gate-btn email"
+                onClick={() => {
+                  onClose();
+                  auth.dismissFirstVisit();
+                  onLogout(); // returns to sign in dialog
+                }}
+                style={{ width: "auto", minHeight: "36px", padding: "0 16px", fontSize: "0.8rem", background: "rgba(255,255,255,0.06)" }}
+              >
+                Sign Up with Email
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="profile-summary">
           <div className="profile-avatar">{user.avatar ? <img src={user.avatar} alt="" /> : user.username.slice(0, 2).toUpperCase()}</div>
           <div>
-            <strong>{user.status === "online" ? "Online" : "Offline"}</strong>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <strong style={{ color: "#22c55e", fontSize: "0.95rem" }}>{user.status === "online" ? "● Online" : "○ Offline"}</strong>
+              {user.country ? (
+                <span title={user.country} style={{ fontSize: "14px", cursor: "help" }}>
+                  🏳️ {user.country}
+                </span>
+              ) : null}
+            </div>
             <span>Joined {new Date(user.joinDate).toLocaleDateString()}</span>
           </div>
         </div>
 
-        <div className="profile-stats">
-          <div><span>Games</span><strong>{user.gamesPlayed}</strong></div>
-          <div><span>Wins</span><strong>{user.wins}</strong></div>
-          <div><span>Losses</span><strong>{user.losses}</strong></div>
-          <div><span>Best</span><strong>{formatTime(user.bestTimeMs)}</strong></div>
+        {/* Premium Stats Grid */}
+        <h3 style={{ fontSize: "0.88rem", textTransform: "uppercase", letterSpacing: "0.06em", color: "#60a5fa", margin: "20px 0 10px 0", fontWeight: 800 }}>
+          Player Statistics
+        </h3>
+        <div className="profile-stats-grid" style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+          gap: "10px",
+          marginBottom: "24px",
+        }}>
+          {/* ELO Rating */}
+          <div style={{ background: "rgba(255, 255, 255, 0.04)", border: "1px solid rgba(148, 163, 184, 0.12)", borderRadius: "14px", padding: "12px", position: "relative" }}>
+            <span style={{ fontSize: "0.72rem", color: "#64748b", textTransform: "uppercase", fontWeight: 700 }}>Rank Badge</span>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "6px" }}>
+              <Award size={18} style={{ color: rankInfo.color }} />
+              <strong style={{ fontSize: "1.1rem", color: "#f1f5f9", fontWeight: 800 }}>{rankInfo.name}</strong>
+            </div>
+          </div>
+
+          <div style={{ background: "rgba(255, 255, 255, 0.04)", border: "1px solid rgba(148, 163, 184, 0.12)", borderRadius: "14px", padding: "12px" }}>
+            <span style={{ fontSize: "0.72rem", color: "#64748b", textTransform: "uppercase", fontWeight: 700 }}>Elo Rating</span>
+            <div style={{ display: "flex", alignItems: "baseline", gap: "6px", marginTop: "6px" }}>
+              <strong style={{ fontSize: "1.1rem", color: "#f1f5f9", fontWeight: 800 }}>{ratingVal} ELO</strong>
+              <small style={{ fontSize: "0.7rem", color: "#64748b" }}>Peak: {user.peakRating ?? ratingVal}</small>
+            </div>
+          </div>
+
+          <div style={{ background: "rgba(255, 255, 255, 0.04)", border: "1px solid rgba(148, 163, 184, 0.12)", borderRadius: "14px", padding: "12px" }}>
+            <span style={{ fontSize: "0.72rem", color: "#64748b", textTransform: "uppercase", fontWeight: 700 }}>Games (W/L)</span>
+            <div style={{ display: "flex", alignItems: "baseline", gap: "6px", marginTop: "6px" }}>
+              <strong style={{ fontSize: "1.1rem", color: "#f1f5f9", fontWeight: 800 }}>{user.gamesPlayed}</strong>
+              <small style={{ fontSize: "0.7rem", color: "#64748b" }}>{user.wins}W - {user.losses}L ({winRate}%)</small>
+            </div>
+          </div>
+
+          <div style={{ background: "rgba(255, 255, 255, 0.04)", border: "1px solid rgba(148, 163, 184, 0.12)", borderRadius: "14px", padding: "12px" }}>
+            <span style={{ fontSize: "0.72rem", color: "#64748b", textTransform: "uppercase", fontWeight: 700 }}>Practice PB</span>
+            <div style={{ marginTop: "6px" }}>
+              <strong style={{ fontSize: "1.1rem", color: "#818cf8", fontWeight: 800 }}>
+                {stats.pbMs ? formatTime(stats.pbMs) : "-"}
+              </strong>
+            </div>
+          </div>
+
+          <div style={{ background: "rgba(255, 255, 255, 0.04)", border: "1px solid rgba(148, 163, 184, 0.12)", borderRadius: "14px", padding: "12px" }}>
+            <span style={{ fontSize: "0.72rem", color: "#64748b", textTransform: "uppercase", fontWeight: 700 }}>Average TPS</span>
+            <div style={{ display: "flex", alignItems: "baseline", gap: "6px", marginTop: "6px" }}>
+              <strong style={{ fontSize: "1.1rem", color: "#10b981", fontWeight: 800 }}>{stats.avgTps} t/s</strong>
+              <small style={{ fontSize: "0.7rem", color: "#64748b" }}>Max: {stats.fastestTps}</small>
+            </div>
+          </div>
+
+          <div style={{ background: "rgba(255, 255, 255, 0.04)", border: "1px solid rgba(148, 163, 184, 0.12)", borderRadius: "14px", padding: "12px" }}>
+            <span style={{ fontSize: "0.72rem", color: "#64748b", textTransform: "uppercase", fontWeight: 700 }}>Bot Race W/L</span>
+            <div style={{ display: "flex", alignItems: "baseline", gap: "6px", marginTop: "6px" }}>
+              <strong style={{ fontSize: "1.1rem", color: "#f1f5f9", fontWeight: 800 }}>{user.botWins + user.botLosses}</strong>
+              <small style={{ fontSize: "0.7rem", color: "#64748b" }}>{user.botWins}W - {user.botLosses}L</small>
+            </div>
+          </div>
         </div>
 
         <div className="auth-fields">
           <label>
             <span>Username</span>
-            <input value={draft.username} onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))} />
+            <input value={draft.username} disabled={isGuest} placeholder={isGuest ? auth.guestUsername : "Your username"} onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))} />
           </label>
           <label>
             <span>Avatar URL</span>
-            <input value={draft.avatar} onChange={(event) => setDraft((current) => ({ ...current, avatar: event.target.value }))} />
+            <input value={draft.avatar} disabled={isGuest} placeholder={isGuest ? "Google URL (Locked)" : "https://domain.com/image.png"} onChange={(event) => setDraft((current) => ({ ...current, avatar: event.target.value }))} />
           </label>
           <label>
-            <span>Country</span>
-            <input value={draft.country} onChange={(event) => setDraft((current) => ({ ...current, country: event.target.value }))} />
+            <span>Country Code / Name</span>
+            <input value={draft.country} disabled={isGuest} placeholder={isGuest ? "US / IN / GB (Locked)" : "US / IN / GB / Canada"} onChange={(event) => setDraft((current) => ({ ...current, country: event.target.value }))} />
           </label>
           <label>
             <span>Favorite Mode</span>
-            <input value={draft.favoriteMode} onChange={(event) => setDraft((current) => ({ ...current, favoriteMode: event.target.value }))} />
+            <input value={draft.favoriteMode} disabled={isGuest} placeholder={isGuest ? "Practice (Locked)" : "Practice / Ranked"} onChange={(event) => setDraft((current) => ({ ...current, favoriteMode: event.target.value }))} />
           </label>
           <label>
             <span>Bio</span>
-            <textarea value={draft.bio} onChange={(event) => setDraft((current) => ({ ...current, bio: event.target.value }))} maxLength={220} />
+            <textarea value={draft.bio} disabled={isGuest} placeholder={isGuest ? "Sign in to customize bio..." : "Add your cuber description..."} onChange={(event) => setDraft((current) => ({ ...current, bio: event.target.value }))} maxLength={220} />
           </label>
         </div>
 
         <div className="profile-private-history">
-          <h3>Private Match History</h3>
+          <h3 style={{ fontSize: "0.88rem", textTransform: "uppercase", letterSpacing: "0.06em", color: "#60a5fa", margin: "24px 0 10px 0", fontWeight: 800 }}>
+            Private Match History
+          </h3>
           {privateHistory.length === 0 ? (
-            <p className="no-history-text">No private matches played yet.</p>
+            <p className="no-history-text" style={{ color: "#475569", fontSize: "0.82rem", fontStyle: "italic", margin: "4px 0" }}>No private matches played yet.</p>
           ) : (
             <div className="history-list">
               {privateHistory.map((item: any) => (
@@ -3302,10 +3748,12 @@ function ProfileDialog({
           </button>
         </div>
 
-        <button type="button" className="profile-logout" onClick={onLogout}>
-          <LogOut size={16} aria-hidden="true" />
-          Logout
-        </button>
+        {!isGuest && (
+          <button type="button" className="profile-logout" onClick={onLogout}>
+            <LogOut size={16} aria-hidden="true" />
+            Logout
+          </button>
+        )}
       </motion.section>
     </motion.div>
   );

@@ -93,6 +93,30 @@ export async function registerAuthRoutes(app: FastifyInstance) {
     return reply.status(200).send(successResponse(authService.getOAuthProvider(params.provider)));
   });
 
+  // Google OAuth callback — exchanges the code and redirects to frontend with session tokens
+  app.get("/auth/oauth/google/callback", async (request, reply) => {
+    const query = z.object({ code: z.string().optional(), error: z.string().optional() }).parse(request.query);
+
+    const frontendOrigin = app.env.FRONTEND_ORIGIN ?? "http://localhost:5173";
+
+    if (query.error || !query.code) {
+      return reply.redirect(`${frontendOrigin}?oauth_error=${encodeURIComponent(query.error ?? "access_denied")}`);
+    }
+
+    try {
+      const session = await authService.handleGoogleCallback(query.code);
+      const params = new URLSearchParams({
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+        accessTokenExpiresAt: session.accessTokenExpiresAt,
+      });
+      return reply.redirect(`${frontendOrigin}?oauth_session=${encodeURIComponent(params.toString())}`);
+    } catch (err) {
+      app.log.error(err, "Google OAuth callback failed");
+      return reply.redirect(`${frontendOrigin}?oauth_error=${encodeURIComponent("Authentication failed")}`);
+    }
+  });
+
   app.get("/profile/me", { preHandler: requireAuth }, async (request, reply) => {
     if (!request.auth) throw new ValidationError("Missing authenticated user");
     const profile = await authService.getProfile(request.auth.userId);
