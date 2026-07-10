@@ -9,47 +9,57 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cuberanked"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   backend:
     build:
-      context: .
-      dockerfile: backend/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile
     environment:
       NODE_ENV: development
       APP_PORT: 4000
       APP_HOST: 0.0.0.0
       API_PREFIX: /api/v1
-      FRONTEND_ORIGIN: http://127.0.0.1:5173
+      FRONTEND_ORIGIN: "http://127.0.0.1:5173,http://localhost:5173"
+      FRONTEND_CORS_ALLOW_ANY: "true"
       AUTH_JWT_SECRET: dev-only-cuberanked-secret-change-me
       AUTH_ACCESS_TOKEN_TTL_SECONDS: 900
       AUTH_REFRESH_TOKEN_TTL_DAYS: 30
       AUTH_STORE_PATH: data/auth-store.json
-      LOG_LEVEL: info
+      LOG_LEVEL: debug
       DATABASE_URL: postgresql://cuberanked:cuberanked@db:5432/cuberanked?schema=public
       REDIS_URL: redis://redis:6379
     ports:
       - "4000:4000"
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   frontend:
     build:
-      context: .
-      dockerfile: Dockerfile.frontend
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
       - "8000:5173"
-    environment:
-      VITE_API_BASE_URL: http://127.0.0.1:4000/api/v1
-      VITE_SOCKET_URL: http://127.0.0.1:4000/v1
-    depends_on:
-      - backend
+    # VITE_API_BASE_URL and VITE_SOCKET_URL are NOT set here so Vite uses
+    # its dynamic fallback: http://${window.location.hostname}:4000/...
+    # This way phone browsers on the LAN use http://192.168.x.x:4000 correctly.
 
 volumes:
   pgdata:
-

@@ -142,7 +142,7 @@ export function createSocketManager(app: FastifyInstance) {
     pingTimeout: 7_000,
   });
 
-  const namespace = io.of("/v1");
+  const namespace = io.of(app.env.SOCKET_PATH);
   const sessions = new Map<string, ClientSession>();
   const socketToClient = new Map<string, string>();
   const queue: string[] = [];

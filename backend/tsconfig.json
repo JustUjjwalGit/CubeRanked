@@ -12,7 +12,11 @@
     "noEmit": false,
     "outDir": "./dist",
     "rootDir": "./src",
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@shared/*": ["../shared/*"]
+    },
+    "baseUrl": "."
   },
   "include": ["src", "prisma"],
   "exclude": ["dist", "node_modules"]

@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Users, UserPlus, UserMinus, ShieldAlert, Check, Trash2, Play, Tv, Lock, Globe, RefreshCcw } from "lucide-react";
-import { socketManager } from "../network/socketManager";
-import type { SocketDebugSnapshot } from "../network/socketTypes";
+import { socketManager } from "../../network/socketManager";
+import type { SocketDebugSnapshot } from "../../network/socketTypes";
 
 interface SocialSidebarProps {
   snapshot: SocketDebugSnapshot;

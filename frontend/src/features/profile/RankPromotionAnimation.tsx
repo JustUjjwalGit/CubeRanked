@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { type RankInfo } from "../lib/ranks";
+import { type RankInfo } from "../../utils/ranks";
 
 export default function RankPromotionAnimation({
   rank,

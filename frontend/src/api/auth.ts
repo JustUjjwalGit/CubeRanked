@@ -1,5 +1,5 @@
-import type { ApiFailure } from "./api";
-import type { SessionSettings, SolveRecord } from "./sessionStats";
+import type { ApiFailure } from "./client";
+import type { SessionSettings, SolveRecord } from "../utils/sessionStats";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000/api/v1`;
 const ACCESS_TOKEN_KEY = "cuberanked.auth.accessToken";

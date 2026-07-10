@@ -14,8 +14,8 @@ import {
   updateProfile as updateCloudProfile,
   type UserProfile,
   type UserStatistics,
-} from "../lib/authApi";
-import type { SessionSettings } from "../lib/sessionStats";
+} from "../../api/auth";
+import type { SessionSettings } from "../../utils/sessionStats";
 
 const GUEST_USERNAME_KEY = "cuberanked.guest.username";
 const FIRST_VISIT_KEY = "cuberanked.firstVisit";

@@ -7,7 +7,12 @@ export const envSchema = z.object({
   APP_PORT: z.coerce.number().int().positive().default(4000),
   APP_HOST: z.string().default("0.0.0.0"),
   API_PREFIX: z.string().default("/api/v1"),
-  FRONTEND_ORIGIN: z.string().url(),
+  FRONTEND_ORIGIN: z.string().optional().default("http://127.0.0.1:5173,http://localhost:5173"),
+  FRONTEND_CORS_ALLOW_ANY: z
+    .string()
+    .optional()
+    .transform((val) => val === "true" || val === "1"),
+  SOCKET_PATH: z.string().optional().default("/v1"),
   DATABASE_URL: z.string().min(1).optional(),
   REDIS_URL: z.string().min(1).optional(),
   AUTH_JWT_SECRET: z.string().min(16).default("dev-only-cuberanked-secret-change-me"),

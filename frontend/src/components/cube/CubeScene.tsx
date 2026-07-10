@@ -16,7 +16,7 @@ import {
   type Move,
   type Sticker,
   type Vec3,
-} from "../../lib/cubeEngine";
+} from "../../utils/cubeEngine";
 import { useCubeStore } from "../../state/cubeStore";
 
 const CUBIE_SIZE = 0.92;

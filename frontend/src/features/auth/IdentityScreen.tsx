@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { LogIn, User } from "lucide-react";
-import AppBackground from "./AppBackground";
+import AppBackground from "../../components/AppBackground";
 
 interface IdentityScreenProps {
   onGuest: () => void;

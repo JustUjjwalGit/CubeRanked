@@ -11,9 +11,9 @@ import {
   BookOpen,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useCubeStore } from "../state/cubeStore";
-import { parseMove } from "../lib/cubeEngine";
-import CubeScene from "./cube/CubeScene";
+import { useCubeStore } from "../../state/cubeStore";
+import { parseMove } from "../../utils/cubeEngine";
+import CubeScene from "../../components/cube/CubeScene";
 
 interface LessonStep {
   title: string;

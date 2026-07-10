@@ -97,7 +97,8 @@ export async function registerAuthRoutes(app: FastifyInstance) {
   app.get("/auth/oauth/google/callback", async (request, reply) => {
     const query = z.object({ code: z.string().optional(), error: z.string().optional() }).parse(request.query);
 
-    const frontendOrigin = app.env.FRONTEND_ORIGIN ?? "http://localhost:5173";
+    // FRONTEND_ORIGIN may be a comma-separated list for CORS; use the first entry for redirect
+    const frontendOrigin = app.env.FRONTEND_ORIGIN?.split(",")[0]?.trim() ?? "http://localhost:5173";
 
     if (query.error || !query.code) {
       return reply.redirect(`${frontendOrigin}?oauth_error=${encodeURIComponent(query.error ?? "access_denied")}`);

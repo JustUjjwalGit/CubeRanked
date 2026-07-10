@@ -10,8 +10,8 @@ import {
   type CubeState,
   type Face,
   type Move,
-} from "../lib/cubeEngine";
-import { cubeFromScramble } from "../lib/scramble";
+} from "../utils/cubeEngine";
+import { cubeFromScramble } from "../utils/scramble";
 
 export type TurnMode = "normal" | "prime" | "double";
 

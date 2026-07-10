@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchHealth, type HealthState } from "../lib/api";
+import { fetchHealth, type HealthState } from "../api/client";
 
 interface BackendHealthInfo {
   state: HealthState;
