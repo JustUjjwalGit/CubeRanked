@@ -97,11 +97,12 @@ export async function registerAuthRoutes(app: FastifyInstance) {
   app.get("/auth/oauth/google/callback", async (request, reply) => {
     const query = z.object({ code: z.string().optional(), error: z.string().optional() }).parse(request.query);
 
-    // FRONTEND_ORIGIN may be a comma-separated list for CORS; use the first entry for redirect
-    const frontendOrigin = app.env.FRONTEND_ORIGIN?.split(",")[0]?.trim() ?? "http://localhost:5173";
+    // FRONTEND_URL is the single canonical frontend URL for redirect.
+    // FRONTEND_ORIGIN may be a comma-separated list for CORS — not for redirect.
+    const frontendUrl = app.env.FRONTEND_URL ?? app.env.FRONTEND_ORIGIN?.split(",")[0]?.trim() ?? "http://localhost:5173";
 
     if (query.error || !query.code) {
-      return reply.redirect(`${frontendOrigin}?oauth_error=${encodeURIComponent(query.error ?? "access_denied")}`);
+      return reply.redirect(`${frontendUrl}?oauth_error=${encodeURIComponent(query.error ?? "access_denied")}`);
     }
 
     try {
@@ -111,10 +112,10 @@ export async function registerAuthRoutes(app: FastifyInstance) {
         refreshToken: session.refreshToken,
         accessTokenExpiresAt: session.accessTokenExpiresAt,
       });
-      return reply.redirect(`${frontendOrigin}?oauth_session=${encodeURIComponent(params.toString())}`);
+      return reply.redirect(`${frontendUrl}?oauth_session=${encodeURIComponent(params.toString())}`);
     } catch (err) {
       app.log.error(err, "Google OAuth callback failed");
-      return reply.redirect(`${frontendOrigin}?oauth_error=${encodeURIComponent("Authentication failed")}`);
+      return reply.redirect(`${frontendUrl}?oauth_error=${encodeURIComponent("Authentication failed")}`);
     }
   });
 

@@ -136,6 +136,7 @@ export default function HomeScreen({
               )}
             </button>
           )}
+
           
           {authMode === "authenticated" && user ? (
             <div className="user-profile-widget">

@@ -39,8 +39,12 @@ export interface UserProfile {
   statistics: UserStatistics;
   rating?: number;
   peakRating?: number;
+  peakElo?: number;
   streak?: number;
   seasonRating?: number;
+  seasonPeak?: number;
+  globalPeak?: number;
+  winRate?: number;
   glicko?: {
     rating: number;
     rd: number;

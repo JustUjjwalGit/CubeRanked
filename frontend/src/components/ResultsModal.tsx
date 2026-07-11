@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
-import { BadgeCheck, Trophy, Play, RefreshCcw, Home as HomeIcon, Gamepad2 } from "lucide-react";
+import { BadgeCheck, Trophy, Play, RefreshCcw, Home as HomeIcon, Gamepad2, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { formatSolveTime, formatTime, type SolveRecord } from "../utils/sessionStats";
-import { getRankFromRating } from "../utils/ranks";
+import { getRankFromElo, getRankProgress, isRankPromotion } from "../utils/ranks";
 import type { GameMode } from "../state/gameStateMachine";
 import type { Penalty } from "../utils/scramble";
 
@@ -38,6 +38,7 @@ interface RatingUpdate {
   clientId: string;
   previousRating: number;
   newRating: number;
+  eloChange: number;
   isPlacement: boolean;
   placementMatchesPlayed: number;
 }
@@ -111,27 +112,64 @@ export default function ResultsModal({
         {isRankedRace && onlineResult?.ratingUpdates ? (
           <div className="rating-updates-container">
             {onlineResult.ratingUpdates.filter(u => u.clientId === onlineResult.you?.clientId).map(update => {
-              const diff = update.newRating - update.previousRating;
-              const rank = getRankFromRating(update.newRating, update.isPlacement);
+              const rank = getRankFromElo(update.newRating, update.isPlacement);
+              const change = update.eloChange ?? update.newRating - update.previousRating;
+              const progress = getRankProgress(update.newRating, update.isPlacement);
               return (
-                <div key={update.clientId} className="rating-update-card">
-                  <div className="rank-badge" style={{ borderColor: rank.color, color: rank.color }}>
-                    {rank.badge}
-                  </div>
-                  <div className="rating-details">
-                    <span className="tier-name" style={{ color: rank.color }}>{rank.tier}</span>
-                    <div className="rating-numbers">
-                      <span className="current-rating">{update.isPlacement ? "Unranked" : update.newRating}</span>
-                      {!update.isPlacement && diff !== 0 && (
-                        <span className={diff > 0 ? "rating-diff positive" : "rating-diff negative"}>
-                          {diff > 0 ? `+${diff}` : diff}
+                <div key={update.clientId} className="rating-update-card" style={{ flexDirection: "column", alignItems: "stretch" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                    <div className="rank-badge" style={{ borderColor: rank.color, color: rank.color }}>
+                      {rank.badge}
+                    </div>
+                    <div className="rating-details">
+                      <span className="tier-name" style={{ color: rank.color }}>
+                        {update.isPlacement ? "Placement Matches" : rank.tier}
+                        {rank.division ? ` ${rank.division}` : ""}
+                      </span>
+                      <div className="rating-numbers">
+                        <span className="current-rating">
+                          {update.isPlacement ? `Match ${update.placementMatchesPlayed}/10` : update.newRating}
+                        </span>
+                        {!update.isPlacement && change !== 0 && (
+                          <span className={`rating-diff ${change > 0 ? "positive" : "negative"}`}>
+                            {change > 0 ? `+${change}` : change}
+                          </span>
+                        )}
+                      </div>
+                      {!update.isPlacement && (
+                        <span style={{ fontSize: "0.72rem", color: "#64748b", fontWeight: 600 }}>
+                          Previous: {update.previousRating} ELO
                         </span>
                       )}
                     </div>
-                    {update.isPlacement && (
-                      <div className="placement-progress">Placement: {update.placementMatchesPlayed}/5</div>
-                    )}
                   </div>
+                  {!update.isPlacement && progress.nextRank && (
+                    <div className="rank-progress-bar-container" style={{ marginTop: "8px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.65rem", color: "#64748b", fontWeight: 700, marginBottom: "4px" }}>
+                        <span>{rank.badge}</span>
+                        <span>{progress.nextRank.badge}</span>
+                      </div>
+                      <div className="rank-progress-track">
+                        <div className="rank-progress-fill" style={{ width: `${Math.round(progress.progress * 100)}%`, background: rank.color }} />
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "center", fontSize: "0.68rem", color: "#94a3b8", fontWeight: 600, marginTop: "3px" }}>
+                        {progress.eloWithinRank} / {progress.eloRequiredForNext} ELO
+                      </div>
+                    </div>
+                  )}
+                  {update.isPlacement && (
+                    <div className="placement-progress" style={{ marginTop: "8px", fontSize: "0.75rem", color: "#94a3b8", fontWeight: 600, textAlign: "center" }}>
+                      <div style={{ display: "flex", gap: "4px", justifyContent: "center", marginTop: "4px" }}>
+                        {Array.from({ length: 10 }, (_, i) => (
+                          <div key={i} style={{
+                            width: "8px", height: "8px", borderRadius: "50%",
+                            background: i < update.placementMatchesPlayed ? rank.color : "rgba(148,163,184,0.25)",
+                            transition: "background 0.3s",
+                          }} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

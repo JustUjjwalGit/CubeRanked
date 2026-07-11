@@ -28,7 +28,6 @@ import {
   Users,
   Wifi,
   X,
-  Award,
   Zap,
   Globe,
   GraduationCap,
@@ -59,7 +58,7 @@ import {
   type SessionSettings,
   type SolveRecord,
 } from "./utils/sessionStats";
-import { getRankFromRating } from "./utils/ranks";
+import { getRankFromRating, isRankPromotion } from "./utils/ranks";
 import { saveReplay, getLocalReplays } from "./utils/replay";
 import { calculateLifetimeStats } from "./utils/statsEngine";
 import {
@@ -120,6 +119,9 @@ import IdentityScreen from "./features/auth/IdentityScreen";
 import RankedGateModal from "./features/ranked/RankedGateModal";
 import RankPromotionAnimation from "./features/profile/RankPromotionAnimation";
 import SocialSidebar from "./features/profile/SocialSidebar";
+import { AchievementToast, type ToastAchievement } from "./features/achievements/AchievementToast";
+import { sendAchievementEvent } from "./api/achievements";
+import type { AchievementEvent } from "./features/achievements/achievement.types";
 
 const HISTORY_KEY = "cuberanked.practice.history";
 const SETTINGS_KEY = "cuberanked.practice.settings";
@@ -142,7 +144,7 @@ const playModes = [
 ] as const;
 
 type PlayableStage = Extract<GameStage, "COUNTDOWN" | "READY" | "INSPECTION" | "PLAYING" | "SOLVED" | "RESULT">;
-type SettingsCategory = "General" | "Appearance" | "Camera" | "Controls" | "Cube" | "Graphics" | "Audio" | "Accessibility";
+type SettingsCategory = "General" | "Appearance" | "Camera" | "Controls" | "Cube" | "Audio";
 type AuthModal = "none" | "login" | "register" | "profile";
 
 interface BotRaceStats {
@@ -226,7 +228,11 @@ export default function App() {
   const [onlineResult, setOnlineResult] = useState<OnlineRaceResult | null>(null);
   const [authModal, setAuthModal] = useState<AuthModal>("none");
   const [rankedGateOpen, setRankedGateOpen] = useState(false);
-  const [promotionData, setPromotionData] = useState<{ rank: import("./lib/ranks").RankInfo, isPromotion: boolean } | null>(null);
+  const [promotionData, setPromotionData] = useState<{ rank: import("./utils/ranks").RankInfo, isPromotion: boolean } | null>(null);
+  const [achievementToastQueue, setAchievementToastQueue] = useState<ToastAchievement[]>([]);
+  const achievementToastDismiss = useCallback((id: string) => {
+    setAchievementToastQueue((q) => q.filter((a) => a.id !== id));
+  }, []);
   const solveStartRef = useRef(0);
   const inspectionStartRef = useRef(0);
   const pausedAtRef = useRef<number | null>(null);
@@ -239,6 +245,29 @@ export default function App() {
   const backendHealth = useBackendHealth();
   const socketSnapshot = useSocketConnection();
   const auth = useAuth();
+
+  const triggerAchievementEvent = useCallback(async (
+    type: AchievementEvent["type"],
+    data: Record<string, unknown> = {},
+  ) => {
+    if (auth.mode !== "authenticated") return;
+    try {
+      const result = await sendAchievementEvent({ type, data });
+      if (result.newlyUnlocked.length > 0) {
+        const toastQueue: ToastAchievement[] = result.newlyUnlocked.map((a) => ({
+          id: a.id,
+          name: a.name,
+          description: a.description,
+          icon: a.icon,
+          rarity: a.rarity,
+          category: a.category,
+        }));
+        setAchievementToastQueue((q) => [...q, ...toastQueue]);
+      }
+    } catch {
+      // silently ignore
+    }
+  }, [auth.mode]);
 
   const guestProfile = useMemo<UserProfile>(() => {
     const validSolves = solveHistory.filter(s => s.finalTimeMs !== null);
@@ -375,7 +404,26 @@ export default function App() {
     if (next.theme !== undefined) {
       audioManager.playThemeSwitch();
     }
-    setSettings((current) => ({ ...current, ...next }));
+    setSettings((current) => {
+      const merged = { ...current };
+      for (const key of Object.keys(next) as (keyof SessionSettings)[]) {
+        const currentVal = current[key];
+        const nextVal = next[key];
+        if (
+          nextVal !== null &&
+          nextVal !== undefined &&
+          typeof currentVal === "object" &&
+          typeof nextVal === "object" &&
+          !Array.isArray(currentVal) &&
+          !Array.isArray(nextVal)
+        ) {
+          merged[key] = { ...currentVal, ...nextVal };
+        } else if (nextVal !== undefined) {
+          merged[key] = nextVal;
+        }
+      }
+      return merged;
+    });
   }, []);
 
   const handleAuthError = useCallback((error: unknown) => {
@@ -619,9 +667,7 @@ export default function App() {
       return false;
     }
 
-
-
-    if (stage === "INSPECTION") {
+    if (stage === "INSPECTION" && inspectionStartRef.current > 0) {
       const inspectionMs = performance.now() - inspectionStartRef.current;
       setPenalty(inspectionMs > 17_000 ? "DNF" : inspectionMs > 15_000 ? "+2" : "none");
     } else if (stage === "READY") {
@@ -795,8 +841,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    audioManager.startBgm();
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
     document.documentElement.dataset.theme = settings.theme;
+    audioManager.setMasterVolume(settings.audio.masterVolume);
+    audioManager.setSfxVolume(settings.audio.sfxVolume);
+    audioManager.setUiVolume(settings.audio.uiVolume);
+    audioManager.setNotifVolume(settings.audio.notificationVolume);
+    audioManager.setMusicVolume(settings.audio.musicVolume);
   }, [settings]);
 
   useEffect(() => {
@@ -1125,12 +1180,10 @@ export default function App() {
       if (you && result.ratingUpdates) {
         const myUpdate = result.ratingUpdates.find(u => u.clientId === you.clientId);
         if (myUpdate && !myUpdate.isPlacement) {
-          const prevRank = getRankFromRating(myUpdate.previousRating, false);
-          const newRank = getRankFromRating(myUpdate.newRating, false);
-          
-          if (prevRank.tier !== newRank.tier && myUpdate.newRating > myUpdate.previousRating) {
+          const { promoted, demoted, newRank } = isRankPromotion(myUpdate.previousRating, myUpdate.newRating);
+          if (promoted) {
             setPromotionData({ rank: newRank, isPromotion: true });
-          } else if (prevRank.tier !== newRank.tier && myUpdate.newRating < myUpdate.previousRating) {
+          } else if (demoted) {
             setPromotionData({ rank: newRank, isPromotion: false });
           }
         }
@@ -1275,8 +1328,6 @@ export default function App() {
         solveStartRef.current = now;
         setElapsedMs(0);
         setBotOpponent((current) => current ? { ...current, status: "solving" } : current);
-        // For bot race: COUNTDOWN_COMPLETE → READY, player starts on first move
-        // The bot timer started here, player timer starts on first move
         dispatch({ type: "COUNTDOWN_COMPLETE" });
       }, 3_050),
     ];
@@ -1290,10 +1341,18 @@ export default function App() {
   }, [gameMode, overlay, stage]);
 
   useEffect(() => {
-    if (stage === "READY" && effectiveInspectionEnabled && overlay === "NONE") {
+    if (overlay !== "NONE") return;
+
+    if (stage === "READY" && isBotRace) {
+      solveStartRef.current = performance.now();
+      replayMovesRef.current = [];
+      setElapsedMs(0);
+      setSolveMoveCount(0);
+      dispatch({ type: "FIRST_MOVE" });
+    } else if (stage === "READY" && effectiveInspectionEnabled) {
       beginInspection();
     }
-  }, [stage, effectiveInspectionEnabled, overlay, beginInspection]);
+  }, [stage, effectiveInspectionEnabled, overlay, beginInspection, isBotRace]);
 
   useEffect(() => {
     const shouldFreezeTimer = overlay !== "NONE" && (stage === "PLAYING" || stage === "INSPECTION");
@@ -1321,6 +1380,14 @@ export default function App() {
       return;
     }
 
+    if (stage === "INSPECTION" && inspectionStartRef.current <= 0) {
+      return;
+    }
+
+    if (stage === "PLAYING" && solveStartRef.current <= 0) {
+      return;
+    }
+
     let frame = 0;
 
     const update = () => {
@@ -1332,7 +1399,7 @@ export default function App() {
         } else if (solveStartRef.current > 0 && !onlineFinishSentRef.current) {
           setElapsedMs(now - solveStartRef.current);
         }
-      } else {
+      } else if (stage === "INSPECTION" && inspectionStartRef.current > 0) {
         const inspectionMs = now - inspectionStartRef.current;
         setInspectionElapsedMs(inspectionMs);
         setPenalty(inspectionMs > 17_000 ? "DNF" : inspectionMs > 15_000 ? "+2" : "none");
@@ -1561,6 +1628,8 @@ export default function App() {
               queue={queueUpdate}
               connectionState={socketSnapshot.connectionState}
               onCancel={cancelRankedQueue}
+              userElo={auth.user?.rating}
+              userPlacementMatches={auth.user?.placementMatchesPlayed}
             />
           ) : stage === "PRIVATE_LOBBY" ? (
             <PrivateLobbyScreen
@@ -1829,6 +1898,8 @@ export default function App() {
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      <AchievementToast queue={achievementToastQueue} onDismiss={achievementToastDismiss} />
 
       <AnimatePresence>
         {developerOverlayOpen && import.meta.env.DEV ? (

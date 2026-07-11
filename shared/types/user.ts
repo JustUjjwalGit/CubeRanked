@@ -20,10 +20,14 @@ export interface UserProfile {
   statistics: UserStatistics;
   rating?: number;
   peakRating?: number;
+  peakElo?: number;
   streak?: number;
   seasonRating?: number;
+  seasonPeak?: number;
+  globalPeak?: number;
   glicko?: GlickoState;
   placementMatchesPlayed?: number;
+  winRate?: number;
 }
 
 export interface UserStatistics {

@@ -11,17 +11,39 @@ export interface SolveRecord {
   createdAt: string;
 }
 
+export type AccentColor = "indigo" | "cyan" | "violet" | "emerald";
+export type CubeStyle = "classic" | "competition" | "minimal" | "rounded";
+export type StartupPage = "home" | "profile" | "play";
+export type CameraFace = "white" | "yellow" | "green" | "blue" | "red" | "orange";
+
+export interface AudioSettings {
+  masterVolume: number;
+  sfxVolume: number;
+  uiVolume: number;
+  notificationVolume: number;
+  musicVolume: number;
+}
+
 export interface SessionSettings {
   inspectionEnabled: boolean;
   animationSpeed: number;
   theme: "dark" | "light";
   hudVisible: boolean;
+  showFpsCounter: boolean;
   showKeyboardCheatSheet: boolean;
   keybindings: Record<string, string>;
   cameraMode: "competitive" | "free-orbit";
   cameraInvertVertical: boolean;
   cameraSensitivity: number;
   cameraZoomSpeed: number;
+  startupPage: StartupPage;
+  defaultCameraFace: CameraFace;
+  uiScale: number;
+  compactMode: boolean;
+  reducedMotion: boolean;
+  accentColor: AccentColor;
+  cubeStyle: CubeStyle;
+  audio: AudioSettings;
 }
 
 export interface SessionStats {
@@ -34,11 +56,20 @@ export interface SessionStats {
   solveCount: number;
 }
 
+export const DEFAULT_AUDIO: AudioSettings = {
+  masterVolume: 0.8,
+  sfxVolume: 1.0,
+  uiVolume: 1.0,
+  notificationVolume: 1.0,
+  musicVolume: 0.5,
+};
+
 export const DEFAULT_SETTINGS: SessionSettings = {
   inspectionEnabled: true,
   animationSpeed: 0.24,
   theme: "dark",
   hudVisible: true,
+  showFpsCounter: false,
   showKeyboardCheatSheet: true,
   keybindings: {
     U: "U",
@@ -52,6 +83,14 @@ export const DEFAULT_SETTINGS: SessionSettings = {
   cameraInvertVertical: false,
   cameraSensitivity: 1.0,
   cameraZoomSpeed: 1.0,
+  startupPage: "home",
+  defaultCameraFace: "white",
+  uiScale: 1.0,
+  compactMode: false,
+  reducedMotion: false,
+  accentColor: "indigo",
+  cubeStyle: "classic",
+  audio: { ...DEFAULT_AUDIO },
 };
 
 export function calculateStats(history: SolveRecord[]): SessionStats {

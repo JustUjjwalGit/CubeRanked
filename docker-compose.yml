@@ -41,6 +41,9 @@ services:
       AUTH_REFRESH_TOKEN_TTL_DAYS: 30
       AUTH_STORE_PATH: data/auth-store.json
       LOG_LEVEL: debug
+      GOOGLE_CLIENT_ID: your-google-client-id
+      GOOGLE_CLIENT_SECRET: your-google-client-secret
+      GOOGLE_REDIRECT_URI: http://127.0.0.1:4000/api/v1/auth/oauth/google/callback
       DATABASE_URL: postgresql://cuberanked:cuberanked@db:5432/cuberanked?schema=public
       REDIS_URL: redis://redis:6379
     ports:

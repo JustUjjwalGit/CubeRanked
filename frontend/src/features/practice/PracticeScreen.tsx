@@ -8,6 +8,7 @@ import CountdownOverlay from "../../components/CountdownOverlay";
 import ReadyOverlay from "../../components/ReadyOverlay";
 import InspectionOverlay from "../../components/InspectionOverlay";
 import SolvedOverlay from "../../components/SolvedOverlay";
+import FpsCounter from "../../components/FpsCounter";
 import { connectionLabel } from "../../utils/helpers";
 import { socketManager } from "../../network/socketManager";
 import type { RaceOpponentSnapshot, AnimatedCubeState } from "../../utils/botRace";
@@ -77,6 +78,8 @@ export default function PracticeScreen({
         cameraSensitivity={settings.cameraSensitivity}
         cameraZoomSpeed={settings.cameraZoomSpeed}
       />
+
+      {settings.showFpsCounter ? <FpsCounter /> : null}
 
       <div className="match-frame">
         {!showFocusOnly ? (

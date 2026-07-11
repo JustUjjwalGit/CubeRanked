@@ -406,39 +406,121 @@ export function createSocketManager(app: FastifyInstance) {
           const player1 = glicko.makePlayer(g1.rating, g1.rd, g1.vol);
           const player2 = glicko.makePlayer(g2.rating, g2.rd, g2.vol);
 
-          const outcome = winner.clientId === p1.clientId ? 1 : (loser.clientId === p1.clientId ? 0 : 0.5);
+          const p1Won = winner.clientId === p1.clientId;
+          const outcome = p1Won ? 1 : 0;
           glicko.updateRatings([[player1, player2, outcome]]);
 
           const newG1 = { rating: player1.getRating(), rd: player1.getRd(), vol: player1.getVol() };
           const newG2 = { rating: player2.getRating(), rd: player2.getRd(), vol: player2.getVol() };
 
+          const prevElo1 = Math.round(g1.rating);
+          const prevElo2 = Math.round(g2.rating);
+          const newElo1 = Math.round(newG1.rating);
+          const newElo2 = Math.round(newG2.rating);
+
           const p1Placement = (user1.placementMatchesPlayed || 0) + 1;
           const p2Placement = (user2.placementMatchesPlayed || 0) + 1;
+          const p1InPlacement = p1Placement <= 10;
+          const p2InPlacement = p2Placement <= 10;
+
+          const p1NewWins = (user1.statistics?.wins || 0) + (p1Won ? 1 : 0);
+          const p1NewLosses = (user1.statistics?.losses || 0) + (p1Won ? 0 : 1);
+          const p2NewWins = (user2.statistics?.wins || 0) + (p1Won ? 0 : 1);
+          const p2NewLosses = (user2.statistics?.losses || 0) + (p1Won ? 1 : 0);
+
+          // Placement caps: limit max rating during placement to preserve ladder integrity
+          function applyPlacementCap(placementWins: number, elo: number, glickoState: { rating: number; rd: number; vol: number }) {
+            const caps: { maxWins: number; maxElo: number }[] = [
+              { maxWins: 3, maxElo: 1199 },   // Bronze III
+              { maxWins: 5, maxElo: 1599 },   // Silver II
+              { maxWins: 7, maxElo: 1999 },   // Gold I
+              { maxWins: 8, maxElo: 2399 },   // Gold III
+              { maxWins: 9, maxElo: 2799 },   // Platinum II
+              { maxWins: 10, maxElo: 2999 },  // Platinum III
+            ];
+            const cap = caps.find(c => placementWins <= c.maxWins);
+            if (cap && elo > cap.maxElo) {
+              const cappedElo = cap.maxElo;
+              const ratio = cappedElo / elo;
+              return {
+                elo: cappedElo,
+                glicko: { rating: Math.round(glickoState.rating * ratio), rd: glickoState.rd, vol: glickoState.vol },
+              };
+            }
+            return { elo, glicko: glickoState };
+          }
+
+          const p1Cap = p1InPlacement ? applyPlacementCap(p1NewWins, newElo1, newG1) : { elo: newElo1, glicko: newG1 };
+          const p2Cap = p2InPlacement ? applyPlacementCap(p2NewWins, newElo2, newG2) : { elo: newElo2, glicko: newG2 };
+
+          const finalElo1 = p1Cap.elo;
+          const finalElo2 = p2Cap.elo;
+          const finalG1 = p1Cap.glicko;
+          const finalG2 = p2Cap.glicko;
+
+          const p1PeakElo = Math.max(user1.peakElo || 1200, finalElo1);
+          const p2PeakElo = Math.max(user2.peakElo || 1200, finalElo2);
+          const p1SeasonPeak = Math.max(user1.seasonPeak || 1200, finalElo1);
+          const p2SeasonPeak = Math.max(user2.seasonPeak || 1200, finalElo2);
+          const p1GlobalPeak = Math.max(user1.globalPeak || 1200, finalElo1);
+          const p2GlobalPeak = Math.max(user2.globalPeak || 1200, finalElo2);
+
+          const p1WinRate = p1NewWins + p1NewLosses > 0 ? Math.round((p1NewWins / (p1NewWins + p1NewLosses)) * 100) : 0;
+          const p2WinRate = p2NewWins + p2NewLosses > 0 ? Math.round((p2NewWins / (p2NewWins + p2NewLosses)) * 100) : 0;
 
           await store.updateUser(user1.id, { 
-            glicko: newG1, 
-            rating: Math.round(newG1.rating), 
-            placementMatchesPlayed: p1Placement 
+            glicko: finalG1, 
+            rating: finalElo1,
+            peakElo: p1PeakElo,
+            seasonPeak: p1SeasonPeak,
+            globalPeak: p1GlobalPeak,
+            placementMatchesPlayed: p1Placement,
+            streak: p1Won ? (user1.streak || 0) + 1 : 0,
+            winRate: p1WinRate,
           });
+
+          if (user1.statistics) {
+            await store.updateStatistics(user1.id, {
+              wins: p1NewWins,
+              losses: p1NewLosses,
+              gamesPlayed: (user1.statistics.gamesPlayed || 0) + 1,
+            });
+          }
+
           await store.updateUser(user2.id, { 
-            glicko: newG2, 
-            rating: Math.round(newG2.rating), 
-            placementMatchesPlayed: p2Placement 
+            glicko: finalG2, 
+            rating: finalElo2,
+            peakElo: p2PeakElo,
+            seasonPeak: p2SeasonPeak,
+            globalPeak: p2GlobalPeak,
+            placementMatchesPlayed: p2Placement,
+            streak: p1Won ? 0 : (user2.streak || 0) + 1,
+            winRate: p2WinRate,
           });
+
+          if (user2.statistics) {
+            await store.updateStatistics(user2.id, {
+              wins: p2NewWins,
+              losses: p2NewLosses,
+              gamesPlayed: (user2.statistics.gamesPlayed || 0) + 1,
+            });
+          }
 
           ratingUpdates = [
             {
               clientId: p1.clientId,
-              previousRating: Math.round(g1.rating),
-              newRating: Math.round(newG1.rating),
-              isPlacement: p1Placement <= 5,
+              previousRating: prevElo1,
+              newRating: finalElo1,
+              eloChange: finalElo1 - prevElo1,
+              isPlacement: p1InPlacement,
               placementMatchesPlayed: p1Placement,
             },
             {
               clientId: p2.clientId,
-              previousRating: Math.round(g2.rating),
-              newRating: Math.round(newG2.rating),
-              isPlacement: p2Placement <= 5,
+              previousRating: prevElo2,
+              newRating: finalElo2,
+              eloChange: finalElo2 - prevElo2,
+              isPlacement: p2InPlacement,
               placementMatchesPlayed: p2Placement,
             }
           ];

@@ -7,7 +7,8 @@ export const envSchema = z.object({
   APP_PORT: z.coerce.number().int().positive().default(4000),
   APP_HOST: z.string().default("0.0.0.0"),
   API_PREFIX: z.string().default("/api/v1"),
-  FRONTEND_ORIGIN: z.string().optional().default("http://127.0.0.1:5173,http://localhost:5173"),
+  FRONTEND_URL: z.string().optional().default("http://127.0.0.1:8000"),
+  FRONTEND_ORIGIN: z.string().optional().default("http://127.0.0.1:8000,http://localhost:8000"),
   FRONTEND_CORS_ALLOW_ANY: z
     .string()
     .optional()

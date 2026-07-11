@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { X, Users, UserPlus, UserMinus, ShieldAlert, Check, Trash2, Play, Tv, Lock, Globe, RefreshCcw } from "lucide-react";
+import { motion } from "framer-motion";
+import { X, Users, UserPlus, Check, Trash2, Play } from "lucide-react";
 import { socketManager } from "../../network/socketManager";
 import type { SocketDebugSnapshot } from "../../network/socketTypes";
 
@@ -8,6 +8,23 @@ interface SocialSidebarProps {
   snapshot: SocketDebugSnapshot;
   onClose: () => void;
 }
+
+const activityColors: Record<string, string> = {
+  match: "#f59e0b",
+  queue: "#818cf8",
+  practice: "#10b981",
+  online: "#22c55e",
+};
+
+const formatActivity = (act: string) => {
+  switch (act) {
+    case "practice": return "In Practice";
+    case "queue": return "In Ranked Queue";
+    case "match": return "In Match";
+    case "online": return "Online";
+    default: return "Offline";
+  }
+};
 
 export default function SocialSidebar({ snapshot, onClose }: SocialSidebarProps) {
   const [activeTab, setActiveTab] = useState<"friends" | "requests" | "recent" | "privacy">("friends");
@@ -22,40 +39,15 @@ export default function SocialSidebar({ snapshot, onClose }: SocialSidebarProps)
   const handleAddFriendSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!addUsername.trim()) return;
-
     setAdding(true);
     setFeedback(null);
-
-    // Call socket emitter
     socketManager.sendFriendRequest(addUsername.trim());
-    
-    // Set feedback timeout / sync
     setTimeout(() => {
       setAdding(false);
       setAddUsername("");
       setFeedback({ type: "success", message: `Friend request sent to ${addUsername}` });
       setTimeout(() => setFeedback(null), 3000);
     }, 600);
-  };
-
-  const formatActivity = (act: string) => {
-    switch (act) {
-      case "practice": return "In Practice";
-      case "queue": return "In Ranked Queue";
-      case "match": return "In Match";
-      case "online": return "Online";
-      default: return "Offline";
-    }
-  };
-
-  const getActivityColor = (act: string) => {
-    switch (act) {
-      case "match": return "#f59e0b"; // amber
-      case "queue": return "#818cf8"; // indigo
-      case "practice": return "#10b981"; // emerald
-      case "online": return "#22c55e"; // green
-      default: return "#64748b"; // slate
-    }
   };
 
   return (
@@ -65,225 +57,102 @@ export default function SocialSidebar({ snapshot, onClose }: SocialSidebarProps)
       animate={{ x: 0 }}
       exit={{ x: "100%" }}
       transition={{ type: "spring", stiffness: 220, damping: 24 }}
-      style={{
-        position: "fixed",
-        top: 0,
-        right: 0,
-        bottom: 0,
-        width: "min(360px, 92vw)",
-        background: "rgba(9, 11, 18, 0.95)",
-        backdropFilter: "blur(24px)",
-        borderLeft: "1px solid rgba(148, 163, 184, 0.16)",
-        zIndex: 8500,
-        display: "flex",
-        flexDirection: "column",
-        boxShadow: "-10px 0 40px rgba(0, 0, 0, 0.5)",
-      }}
     >
-      {/* Header */}
-      <div style={{ padding: "20px", borderBottom: "1px solid rgba(148, 163, 184, 0.1)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <Users size={20} style={{ color: "#60a5fa" }} />
-          <h2 style={{ fontSize: "1.1rem", fontWeight: 800, margin: 0, color: "#f1f5f9" }}>Social Dashboard</h2>
+      <div className="social-sidebar-header">
+        <div className="social-sidebar-heading">
+          <Users size={20} />
+          <h2>Social Dashboard</h2>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            background: "rgba(255,255,255,0.06)",
-            border: "1px solid rgba(148,163,184,0.12)",
-            borderRadius: "8px",
-            width: "32px",
-            height: "32px",
-            display: "grid",
-            placeItems: "center",
-            cursor: "pointer",
-            color: "#94a3b8",
-          }}
-        >
+        <button type="button" onClick={onClose} className="social-sidebar-close" aria-label="Close social">
           <X size={16} />
         </button>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", background: "rgba(255,255,255,0.02)", borderBottom: "1px solid rgba(148,163,184,0.08)" }}>
+      <div className="social-sidebar-tabs">
         {(["friends", "requests", "recent", "privacy"] as const).map((tab) => (
           <button
             key={tab}
             type="button"
+            className={`social-sidebar-tab ${activeTab === tab ? "active" : ""}`}
             onClick={() => setActiveTab(tab)}
-            style={{
-              flex: 1,
-              padding: "12px 0",
-              background: activeTab === tab ? "rgba(99,102,241,0.1)" : "transparent",
-              border: "none",
-              borderBottom: activeTab === tab ? "2px solid #6366f1" : "2px solid transparent",
-              color: activeTab === tab ? "#f1f5f9" : "#64748b",
-              fontSize: "0.78rem",
-              fontWeight: 800,
-              textTransform: "uppercase",
-              letterSpacing: "0.05em",
-              cursor: "pointer",
-              transition: "all 160ms ease",
-            }}
           >
             {tab === "friends" ? `Friends (${friends.length})` :
              tab === "requests" ? `Requests (${requests.length})` :
-             tab === "recent" ? `Recents` : "Privacy"}
+             tab === "recent" ? "Recents" : "Privacy"}
           </button>
         ))}
       </div>
 
-      {/* Tab Contents */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
-        
+      <div className="social-sidebar-content">
         {activeTab === "friends" && (
           <>
-            {/* Add Friend Form */}
-            <form onSubmit={handleAddFriendSubmit} style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
+            <form className="social-sidebar-add-form" onSubmit={handleAddFriendSubmit}>
               <input
+                className="social-sidebar-input"
                 value={addUsername}
                 onChange={(e) => setAddUsername(e.target.value)}
                 placeholder="Enter friend's username"
-                style={{
-                  flex: 1,
-                  background: "rgba(255,255,255,0.04)",
-                  border: "1px solid rgba(148,163,184,0.16)",
-                  borderRadius: "10px",
-                  padding: "0 12px",
-                  height: "36px",
-                  color: "#f1f5f9",
-                  fontSize: "0.82rem",
-                }}
               />
-              <button
-                type="submit"
-                disabled={adding}
-                style={{
-                  background: "#4f46e5",
-                  border: "none",
-                  borderRadius: "10px",
-                  width: "36px",
-                  height: "36px",
-                  display: "grid",
-                  placeItems: "center",
-                  cursor: "pointer",
-                  color: "#fff",
-                }}
-              >
+              <button type="submit" className="social-sidebar-add-btn" disabled={adding}>
                 <UserPlus size={16} />
               </button>
             </form>
 
             {feedback && (
-              <div style={{
-                fontSize: "0.76rem",
-                color: feedback.type === "success" ? "#34d399" : "#fca5a5",
-                background: feedback.type === "success" ? "rgba(52,211,153,0.1)" : "rgba(252,165,165,0.1)",
-                padding: "8px 12px",
-                borderRadius: "8px",
-                border: `1px solid ${feedback.type === "success" ? "rgba(52,211,153,0.2)" : "rgba(252,165,165,0.2)"}`,
-              }}>
+              <div className={`social-sidebar-feedback ${feedback.type}`}>
                 {feedback.message}
               </div>
             )}
 
-            {/* Friends List */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div className="social-sidebar-list">
               {friends.length === 0 ? (
-                <div style={{ textAlign: "center", color: "#475569", fontSize: "0.8rem", padding: "30px 0" }}>
-                  Your friends list is currently empty.
-                </div>
+                <div className="social-sidebar-empty">Your friends list is currently empty.</div>
               ) : (
                 friends.map((friend: any) => (
-                  <div key={friend.id} style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "12px",
-                    background: "rgba(255,255,255,0.03)",
-                    border: "1px solid rgba(148,163,184,0.08)",
-                    borderRadius: "14px",
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                      <div style={{
-                        width: "32px",
-                        height: "32px",
-                        borderRadius: "10px",
-                        background: "rgba(99,102,241,0.2)",
-                        display: "grid",
-                        placeItems: "center",
-                        fontSize: "0.8rem",
-                        fontWeight: 800,
-                        color: "#a5b4fc",
-                        position: "relative",
-                        overflow: "hidden",
-                      }}>
-                        {friend.avatar ? <img src={friend.avatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : friend.username.slice(0, 2).toUpperCase()}
-                        <span style={{
-                          position: "absolute",
-                          bottom: 0,
-                          right: 0,
-                          width: "8px",
-                          height: "8px",
-                          borderRadius: "50%",
-                          background: friend.online ? getActivityColor(friend.activity) : "#64748b",
-                          border: "1px solid #090b12",
-                        }} />
+                  <div key={friend.id} className="social-sidebar-item">
+                    <div className="social-sidebar-user">
+                      <div className="social-sidebar-avatar">
+                        {friend.avatar
+                          ? <img src={friend.avatar} alt="" />
+                          : friend.username.slice(0, 2).toUpperCase()
+                        }
+                        <span
+                          className="social-sidebar-status-dot"
+                          style={{ background: friend.online ? activityColors[friend.activity] || "#64748b" : "#64748b" }}
+                        />
                       </div>
                       <div>
-                        <strong style={{ display: "block", fontSize: "0.84rem", color: "#f1f5f9" }}>{friend.username}</strong>
-                        <span style={{ fontSize: "0.72rem", color: friend.online ? getActivityColor(friend.activity) : "#64748b", fontWeight: 700 }}>
+                        <span className="social-sidebar-name">{friend.username}</span>
+                        <span
+                          className="social-sidebar-activity"
+                          style={{ color: friend.online ? (activityColors[friend.activity] || "#64748b") : "#64748b" }}
+                        >
                           {friend.online ? formatActivity(friend.activity) : "Offline"}
                         </span>
                       </div>
                     </div>
-
-                    <div style={{ display: "flex", gap: "6px" }}>
-                      {/* Invite Button (Only if friend is online) */}
+                    <div className="social-sidebar-actions">
                       {friend.online && (
                         <button
                           type="button"
+                          className="social-sidebar-icon-btn primary"
                           title="Invite to Private Room"
                           onClick={() => {
                             if (snapshot.roomState) {
                               socketManager.sendDirectInvite(friend.id, "private-room", snapshot.roomState.code);
                             } else {
-                              // Auto join/create private lobby
                               socketManager.joinRoom("");
                             }
-                          }}
-                          style={{
-                            background: "rgba(99,102,241,0.15)",
-                            border: "1px solid rgba(99,102,241,0.3)",
-                            borderRadius: "8px",
-                            width: "28px",
-                            height: "28px",
-                            display: "grid",
-                            placeItems: "center",
-                            cursor: "pointer",
-                            color: "#818cf8",
                           }}
                         >
                           <Play size={12} fill="#818cf8" />
                         </button>
                       )}
-
                       <button
                         type="button"
+                        className="social-sidebar-icon-btn danger"
                         title="Remove Friend"
                         onClick={() => socketManager.removeFriend(friend.id)}
-                        style={{
-                          background: "rgba(239,68,68,0.1)",
-                          border: "1px solid rgba(239,68,68,0.2)",
-                          borderRadius: "8px",
-                          width: "28px",
-                          height: "28px",
-                          display: "grid",
-                          placeItems: "center",
-                          cursor: "pointer",
-                          color: "#ef4444",
-                        }}
                       >
                         <Trash2 size={12} />
                       </button>
@@ -296,74 +165,36 @@ export default function SocialSidebar({ snapshot, onClose }: SocialSidebarProps)
         )}
 
         {activeTab === "requests" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+          <div className="social-sidebar-list">
             {requests.length === 0 ? (
-              <div style={{ textAlign: "center", color: "#475569", fontSize: "0.8rem", padding: "30px 0" }}>
-                No pending friend requests.
-              </div>
+              <div className="social-sidebar-empty">No pending friend requests.</div>
             ) : (
               requests.map((req: any) => (
-                <div key={req.fromId} style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "12px",
-                  background: "rgba(255,255,255,0.03)",
-                  border: "1px solid rgba(148,163,184,0.08)",
-                  borderRadius: "14px",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                    <div style={{
-                      width: "32px",
-                      height: "32px",
-                      borderRadius: "10px",
-                      background: "rgba(99,102,241,0.2)",
-                      display: "grid",
-                      placeItems: "center",
-                      fontSize: "0.8rem",
-                      fontWeight: 800,
-                      color: "#a5b4fc",
-                    }}>
-                      {req.fromAvatar ? <img src={req.fromAvatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : req.fromUsername.slice(0, 2).toUpperCase()}
+                <div key={req.fromId} className="social-sidebar-item">
+                  <div className="social-sidebar-user">
+                    <div className="social-sidebar-avatar">
+                      {req.fromAvatar
+                        ? <img src={req.fromAvatar} alt="" />
+                        : req.fromUsername.slice(0, 2).toUpperCase()
+                      }
                     </div>
                     <div>
-                      <strong style={{ display: "block", fontSize: "0.84rem", color: "#f1f5f9" }}>{req.fromUsername}</strong>
-                      <span style={{ fontSize: "0.72rem", color: "#64748b" }}>wants to add you</span>
+                      <span className="social-sidebar-name">{req.fromUsername}</span>
+                      <span className="social-sidebar-activity" style={{ color: "#64748b" }}>wants to add you</span>
                     </div>
                   </div>
-
-                  <div style={{ display: "flex", gap: "6px" }}>
+                  <div className="social-sidebar-actions">
                     <button
                       type="button"
+                      className="social-sidebar-icon-btn success"
                       onClick={() => socketManager.respondFriendRequest(req.fromId, true)}
-                      style={{
-                        background: "#10b981",
-                        border: "none",
-                        borderRadius: "8px",
-                        width: "28px",
-                        height: "28px",
-                        display: "grid",
-                        placeItems: "center",
-                        cursor: "pointer",
-                        color: "#fff",
-                      }}
                     >
                       <Check size={14} />
                     </button>
                     <button
                       type="button"
+                      className="social-sidebar-icon-btn neutral"
                       onClick={() => socketManager.respondFriendRequest(req.fromId, false)}
-                      style={{
-                        background: "rgba(255,255,255,0.08)",
-                        border: "1px solid rgba(148,163,184,0.15)",
-                        borderRadius: "8px",
-                        width: "28px",
-                        height: "28px",
-                        display: "grid",
-                        placeItems: "center",
-                        cursor: "pointer",
-                        color: "#94a3b8",
-                      }}
                     >
                       <X size={14} />
                     </button>
@@ -375,61 +206,38 @@ export default function SocialSidebar({ snapshot, onClose }: SocialSidebarProps)
         )}
 
         {activeTab === "recent" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+          <div className="social-sidebar-list">
             {recents.length === 0 ? (
-              <div style={{ textAlign: "center", color: "#475569", fontSize: "0.8rem", padding: "30px 0" }}>
+              <div className="social-sidebar-empty">
                 No recent opponents found. Play matchmade races to track them here!
               </div>
             ) : (
               recents.map((recent: any) => (
-                <div key={recent.userId} style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "12px",
-                  background: "rgba(255,255,255,0.03)",
-                  border: "1px solid rgba(148,163,184,0.08)",
-                  borderRadius: "14px",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                    <div style={{
-                      width: "32px",
-                      height: "32px",
-                      borderRadius: "10px",
-                      background: "rgba(99,102,241,0.2)",
-                      display: "grid",
-                      placeItems: "center",
-                      fontSize: "0.8rem",
-                      fontWeight: 800,
-                      color: "#a5b4fc",
-                    }}>
-                      {recent.avatar ? <img src={recent.avatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : recent.username.slice(0, 2).toUpperCase()}
+                <div key={recent.userId} className="social-sidebar-item">
+                  <div className="social-sidebar-user">
+                    <div className="social-sidebar-avatar">
+                      {recent.avatar
+                        ? <img src={recent.avatar} alt="" />
+                        : recent.username.slice(0, 2).toUpperCase()
+                      }
                     </div>
                     <div>
-                      <strong style={{ display: "block", fontSize: "0.84rem", color: "#f1f5f9" }}>{recent.username}</strong>
-                      <span style={{ fontSize: "0.72rem", color: "#64748b" }}>
+                      <span className="social-sidebar-name">{recent.username}</span>
+                      <span className="social-sidebar-activity" style={{ color: "#64748b" }}>
                         Played {new Date(recent.playedAt).toLocaleDateString()}
                       </span>
                     </div>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => socketManager.sendFriendRequest(recent.username)}
-                    style={{
-                      background: "rgba(255,255,255,0.06)",
-                      border: "1px solid rgba(148,163,184,0.16)",
-                      borderRadius: "8px",
-                      width: "28px",
-                      height: "28px",
-                      display: "grid",
-                      placeItems: "center",
-                      cursor: "pointer",
-                      color: "#cbd5e1",
-                    }}
-                  >
-                    <UserPlus size={14} />
-                  </button>
+                  <div className="social-sidebar-actions">
+                    <button
+                      type="button"
+                      className="social-sidebar-icon-btn neutral"
+                      onClick={() => socketManager.sendFriendRequest(recent.username)}
+                      title="Add Friend"
+                    >
+                      <UserPlus size={14} />
+                    </button>
+                  </div>
                 </div>
               ))
             )}
@@ -437,35 +245,31 @@ export default function SocialSidebar({ snapshot, onClose }: SocialSidebarProps)
         )}
 
         {activeTab === "privacy" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "20px", textAlign: "left" }}>
-            <h4 style={{ fontSize: "0.85rem", color: "#f1f5f9", margin: "0 0 10px 0", fontWeight: 800 }}>Privacy Permissions</h4>
-            
-            <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+          <div className="social-sidebar-privacy">
+            <h4>Privacy Permissions</h4>
+            <label>
               <div>
-                <span style={{ display: "block", fontSize: "0.84rem", color: "#cbd5e1", fontWeight: 700 }}>Show Online Status</span>
-                <small style={{ color: "#64748b", fontSize: "0.74rem" }}>Allows friends to see when you are active.</small>
+                <span>Show Online Status</span>
+                <small>Allows friends to see when you are active.</small>
               </div>
-              <input type="checkbox" defaultChecked style={{ width: "16px", height: "16px", cursor: "pointer" }} />
+              <input type="checkbox" defaultChecked />
             </label>
-
-            <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+            <label>
               <div>
-                <span style={{ display: "block", fontSize: "0.84rem", color: "#cbd5e1", fontWeight: 700 }}>Allow Friend Requests</span>
-                <small style={{ color: "#64748b", fontSize: "0.74rem" }}>Enables other cubers to add you as a friend.</small>
+                <span>Allow Friend Requests</span>
+                <small>Enables other cubers to add you as a friend.</small>
               </div>
-              <input type="checkbox" defaultChecked style={{ width: "16px", height: "16px", cursor: "pointer" }} />
+              <input type="checkbox" defaultChecked />
             </label>
-
-            <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+            <label>
               <div>
-                <span style={{ display: "block", fontSize: "0.84rem", color: "#cbd5e1", fontWeight: 700 }}>Allow Private Invites</span>
-                <small style={{ color: "#64748b", fontSize: "0.74rem" }}>Enables direct lobby race invites from friends.</small>
+                <span>Allow Private Invites</span>
+                <small>Enables direct lobby race invites from friends.</small>
               </div>
-              <input type="checkbox" defaultChecked style={{ width: "16px", height: "16px", cursor: "pointer" }} />
+              <input type="checkbox" defaultChecked />
             </label>
           </div>
         )}
-
       </div>
     </motion.aside>
   );

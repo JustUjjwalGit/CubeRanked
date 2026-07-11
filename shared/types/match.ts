@@ -64,8 +64,11 @@ export interface RatingUpdate {
   clientId: string;
   previousRating: number;
   newRating: number;
+  eloChange: number;
   isPlacement: boolean;
   placementMatchesPlayed: number;
+  previousTier?: string;
+  newTier?: string;
   tierDemoted?: boolean;
   tierPromoted?: boolean;
 }

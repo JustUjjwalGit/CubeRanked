@@ -6,12 +6,16 @@ export type RankTier =
   | "Platinum"
   | "Diamond"
   | "Master"
-  | "Legend";
+  | "Grandmaster"
+  | "Cube Legend";
+
+export type RankDivision = "I" | "II" | "III" | null;
 
 export interface RankInfo {
   tier: RankTier;
+  division: RankDivision;
   color: string;
-  minRating: number;
-  maxRating: number | null;
+  minElo: number;
+  maxElo: number | null;
   badge: string;
 }

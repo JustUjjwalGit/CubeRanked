@@ -42,6 +42,7 @@ export interface StoredUser {
   provider?: "email" | "google";
   rating?: number;
   peakRating?: number;
+  peakElo?: number;
   glicko?: {
     rating: number;
     rd: number;
@@ -50,6 +51,9 @@ export interface StoredUser {
   placementMatchesPlayed?: number;
   streak?: number;
   seasonRating?: number;
+  seasonPeak?: number;
+  globalPeak?: number;
+  winRate?: number;
   friends?: string[];
   friendRequests?: Array<{ fromId: string; fromUsername: string; fromAvatar: string | null; toId: string; toUsername: string; status: "pending" }>;
   blockedUsers?: string[];
@@ -157,8 +161,12 @@ export class UserStore {
         updatedAt: now,
         rating: 1200,
         peakRating: 1200,
+        peakElo: 1200,
         streak: 0,
         seasonRating: 1200,
+        seasonPeak: 1200,
+        globalPeak: 1200,
+        winRate: 0,
         glicko: { rating: 1500, rd: 350, vol: 0.06 },
         placementMatchesPlayed: 0,
         friends: [],
@@ -205,8 +213,12 @@ export class UserStore {
         provider: "google",
         rating: 1200,
         peakRating: 1200,
+        peakElo: 1200,
         streak: 0,
         seasonRating: 1200,
+        seasonPeak: 1200,
+        globalPeak: 1200,
+        winRate: 0,
         glicko: { rating: 1500, rd: 350, vol: 0.06 },
         placementMatchesPlayed: 0,
         friends: [],
@@ -238,7 +250,7 @@ export class UserStore {
     });
   }
 
-  async updateUser(id: string, patch: Partial<Pick<StoredUser, "username" | "avatar" | "country" | "bio" | "theme" | "favoriteMode" | "status" | "rating" | "glicko" | "placementMatchesPlayed" | "peakRating" | "streak" | "seasonRating">>): Promise<StoredUser | null> {
+  async updateUser(id: string, patch: Partial<Pick<StoredUser, "username" | "avatar" | "country" | "bio" | "theme" | "favoriteMode" | "status" | "rating" | "glicko" | "placementMatchesPlayed" | "peakRating" | "streak" | "seasonRating" | "peakElo" | "seasonPeak" | "globalPeak" | "winRate">>): Promise<StoredUser | null> {
     return this.write((data) => {
       const user = data.users.find((item) => item.id === id);
       if (!user) return null;
