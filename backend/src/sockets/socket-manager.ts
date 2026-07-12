@@ -1460,16 +1460,6 @@ export function createSocketManager(app: FastifyInstance) {
       });
     });
     
-    // Google details or link
-    socket.on("session:link_google", async (payload: { googleId: string; email: string; username: string; avatar: string | null }) => {
-      if (!session.userId) return;
-      try {
-        await store.linkGoogleAccount(session.userId, payload.googleId, payload.avatar);
-      } catch (err) {
-        // ignore
-      }
-    });
-
     socket.on("cube:move", (payload: ClientMovePayload) => {
       socket.to(SHARED_TEST_ROOM_ID).emit("cube:move", {
         ...payload,

@@ -1,14 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import type { User } from "@supabase/supabase-js";
+import { supabase } from "../../lib/supabase";
 import {
-  clearSessionTokens,
-  consumeOAuthRedirect,
   fetchProfile,
-  getOAuthProvider,
-  getStoredTokens,
-  loginAccount,
-  logoutAccount,
-  refreshSession,
-  registerAccount,
   saveCloudSettings,
   saveCloudStatistics,
   updateProfile as updateCloudProfile,
@@ -39,20 +33,17 @@ interface AuthContextValue {
   mode: AuthMode;
   user: UserProfile | null;
   error: string | null;
-  /** The persistent guest username (always available, even when authenticated) */
   guestUsername: string;
-  /** True if this is the user's very first visit (no prior auth attempt) */
   isFirstVisit: boolean;
-  login: (input: { email: string; password: string; rememberMe: boolean }) => Promise<void>;
-  register: (input: { username: string; email: string; password: string; rememberMe: boolean }) => Promise<void>;
+  supabaseUser: User | null;
+  supabaseAccessToken: string | null;
+  loginWithGoogle: () => Promise<void>;
   continueAsGuest: () => void;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   updateProfile: (patch: Partial<Pick<UserProfile, "username" | "avatar" | "country" | "bio" | "theme" | "favoriteMode">>) => Promise<void>;
   syncSettings: (settings: SessionSettings) => Promise<void>;
   syncStatistics: (statistics: UserStatistics) => Promise<void>;
-  startOAuth: (provider: "google" | "github" | "discord") => Promise<void>;
-  upgradeFromGuest: (method: "google" | "email") => void;
   clearError: () => void;
   dismissFirstVisit: () => void;
 }
@@ -64,6 +55,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [guestUsername] = useState<string>(getOrCreateGuestUsername);
+  const [supabaseUser, setSupabaseUser] = useState<User | null>(null);
+  const [supabaseAccessToken, setSupabaseAccessToken] = useState<string | null>(null);
   const [isFirstVisit, setIsFirstVisit] = useState(() => {
     return !localStorage.getItem(FIRST_VISIT_KEY);
   });
@@ -73,109 +66,159 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsFirstVisit(false);
   }, []);
 
+  // Boot: restore Supabase session
   useEffect(() => {
     let active = true;
 
     const boot = async () => {
-      // Handle OAuth redirect callback first
-      const oauthResult = consumeOAuthRedirect();
-      if (oauthResult?.type === "error") {
-        if (active) {
-          setError(oauthResult.message);
-          setMode("guest");
-          localStorage.setItem(FIRST_VISIT_KEY, "1");
-          setIsFirstVisit(false);
+      console.log("[OAuth DEBUG] Boot: calling supabase.auth.getSession()");
+      const sbKeysBoot: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith("sb-")) sbKeysBoot.push(key);
+      }
+      console.log("[OAuth DEBUG] Boot: localStorage sb-* keys:", sbKeysBoot);
+
+      const { data: { session } } = await supabase.auth.getSession();
+      console.log("[OAuth DEBUG] Boot: getSession result:", session?.access_token ? "session found" : "no session");
+
+      if (session?.access_token) {
+        setSupabaseAccessToken(session.access_token);
+        setSupabaseUser(session.user);
+
+        try {
+          const profile = await fetchProfile(session.access_token);
+          if (active) {
+            setUser(profile);
+            setMode("authenticated");
+          }
+        } catch {
+          // Token valid but profile fetch failed — fall to guest
+          if (active) setMode("guest");
         }
-        return;
-      }
-
-      // If oauth_session was consumed, tokens are now stored — fall through to refresh
-      const tokens = getStoredTokens();
-      if (!tokens.refreshToken) {
-        if (active) setMode("guest");
-        return;
-      }
-
-      const session = await refreshSession();
-      if (!active) return;
-
-      if (session) {
-        setUser(session.user);
-        setMode("authenticated");
-        localStorage.setItem(FIRST_VISIT_KEY, "1");
-        setIsFirstVisit(false);
       } else {
-        setMode("guest");
+        if (active) setMode("guest");
       }
     };
 
     void boot();
-
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, []);
 
-  const login = useCallback(async (input: { email: string; password: string; rememberMe: boolean }) => {
-    setError(null);
-    const session = await loginAccount(input);
-    setUser(session.user);
-    setMode("authenticated");
-    localStorage.setItem(FIRST_VISIT_KEY, "1");
-    setIsFirstVisit(false);
+  // Listen for Supabase auth state changes
+  useEffect(() => {
+    console.log("[OAuth DEBUG] Registering onAuthStateChange listener");
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log("[OAuth DEBUG] onAuthStateChange event:", event, "session:", session?.access_token ? "present" : "null");
+
+      if (event === "SIGNED_IN" && session?.access_token) {
+        setSupabaseAccessToken(session.access_token);
+        setSupabaseUser(session.user);
+
+        try {
+          const profile = await fetchProfile(session.access_token);
+          setUser(profile);
+          setMode("authenticated");
+        } catch {
+          setError("Failed to load profile after sign in");
+          setMode("guest");
+        }
+      } else if (event === "SIGNED_OUT") {
+        setSupabaseAccessToken(null);
+        setSupabaseUser(null);
+        setUser(null);
+        setMode("guest");
+      } else if (event === "TOKEN_REFRESHED" && session?.access_token) {
+        setSupabaseAccessToken(session.access_token);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const register = useCallback(async (input: { username: string; email: string; password: string; rememberMe: boolean }) => {
+  const loginWithGoogle = useCallback(async () => {
     setError(null);
-    const session = await registerAccount(input);
-    setUser(session.user);
-    setMode("authenticated");
-    localStorage.setItem(FIRST_VISIT_KEY, "1");
-    setIsFirstVisit(false);
+
+    // DEBUG: log origin and Supabase storage keys before OAuth
+    console.log("[OAuth DEBUG] window.location.origin:", window.location.origin);
+    const sbKeys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("sb-")) sbKeys.push(key);
+    }
+    console.log("[OAuth DEBUG] localStorage sb-* keys:", sbKeys);
+    sbKeys.forEach((k) => {
+      try {
+        console.log(`[OAuth DEBUG] ${k}:`, JSON.parse(localStorage.getItem(k) ?? "null"));
+      } catch {
+        console.log(`[OAuth DEBUG] ${k}:`, localStorage.getItem(k));
+      }
+    });
+
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+    });
+
+    if (oauthError) {
+      console.error("[OAuth DEBUG] signInWithOAuth error:", oauthError);
+      setError(oauthError.message);
+    }
   }, []);
 
   const continueAsGuest = useCallback(() => {
-    clearSessionTokens();
     setUser(null);
     setMode("guest");
     setError(null);
-    localStorage.setItem(FIRST_VISIT_KEY, "1");
-    setIsFirstVisit(false);
   }, []);
 
   const logout = useCallback(async () => {
     setError(null);
-    await logoutAccount();
+    console.log("[OAuth DEBUG] Logout: calling supabase.auth.signOut()");
+    const sbKeysBefore: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("sb-")) sbKeysBefore.push(key);
+    }
+    console.log("[OAuth DEBUG] Logout: sb-* keys before signOut:", sbKeysBefore);
+    await supabase.auth.signOut();
+    const sbKeysAfter: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("sb-")) sbKeysAfter.push(key);
+    }
+    console.log("[OAuth DEBUG] Logout: sb-* keys after signOut:", sbKeysAfter);
+    setSupabaseAccessToken(null);
+    setSupabaseUser(null);
     setUser(null);
     setMode("guest");
   }, []);
 
   const refreshProfile = useCallback(async () => {
-    if (mode !== "authenticated") return;
+    if (mode !== "authenticated" || !supabaseAccessToken) return;
     try {
-      const profile = await fetchProfile();
+      const profile = await fetchProfile(supabaseAccessToken);
       setUser(profile);
     } catch (e) {
       console.error("Failed to refresh profile", e);
     }
-  }, [mode]);
+  }, [mode, supabaseAccessToken]);
 
   const updateProfile = useCallback(async (patch: Partial<Pick<UserProfile, "username" | "avatar" | "country" | "bio" | "theme" | "favoriteMode">>) => {
-    if (mode !== "authenticated") return;
+    if (mode !== "authenticated" || !supabaseAccessToken) return;
     setError(null);
-    const profile = await updateCloudProfile(patch);
+    const profile = await updateCloudProfile(supabaseAccessToken, patch);
     setUser(profile);
-  }, [mode]);
+  }, [mode, supabaseAccessToken]);
 
   const syncSettings = useCallback(async (settings: SessionSettings) => {
-    if (mode !== "authenticated") return;
-    const saved = await saveCloudSettings(settings);
+    if (mode !== "authenticated" || !supabaseAccessToken) return;
+    const saved = await saveCloudSettings(supabaseAccessToken, settings);
     setUser((current) => current ? { ...current, settings: saved, theme: saved.theme } : current);
-  }, [mode]);
+  }, [mode, supabaseAccessToken]);
 
   const syncStatistics = useCallback(async (statistics: UserStatistics) => {
-    if (mode !== "authenticated") return;
-    const saved = await saveCloudStatistics(statistics);
+    if (mode !== "authenticated" || !supabaseAccessToken) return;
+    const saved = await saveCloudStatistics(supabaseAccessToken, statistics);
     setUser((current) => current ? {
       ...current,
       statistics: saved,
@@ -187,50 +230,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       bestTimeMs: saved.bestTimeMs,
       averageTimeMs: saved.averageTimeMs,
     } : current);
-  }, [mode]);
-
-  const startOAuth = useCallback(async (provider: "google" | "github" | "discord") => {
-    const oauth = await getOAuthProvider(provider);
-    if (oauth.configured && oauth.authorizationUrl) {
-      window.location.href = oauth.authorizationUrl;
-      return;
-    }
-
-    setError(`${provider[0].toUpperCase()}${provider.slice(1)} login is prepared but not yet configured on this server.`);
-  }, []);
-
-  // upgradeFromGuest triggers the appropriate auth flow for a guest wanting to create an account
-  const upgradeFromGuest = useCallback((method: "google" | "email") => {
-    if (method === "google") {
-      void startOAuth("google");
-    }
-    // For "email", the caller should open the auth dialog — this is just a signal
-  }, [startOAuth]);
+  }, [mode, supabaseAccessToken]);
 
   const clearError = useCallback(() => setError(null), []);
-
-  useEffect(() => {
-    if (mode !== "authenticated") return;
-
-    let active = true;
-    const refresh = async () => {
-      try {
-        const profile = await fetchProfile();
-        if (active) setUser(profile);
-      } catch {
-        if (active) {
-          clearSessionTokens();
-          setUser(null);
-          setMode("guest");
-        }
-      }
-    };
-
-    void refresh();
-    return () => {
-      active = false;
-    };
-  }, [mode]);
 
   const value = useMemo<AuthContextValue>(() => ({
     mode,
@@ -238,16 +240,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     error,
     guestUsername,
     isFirstVisit,
-    login,
-    register,
+    supabaseUser,
+    supabaseAccessToken,
+    loginWithGoogle,
     continueAsGuest,
     logout,
     refreshProfile,
     updateProfile,
     syncSettings,
     syncStatistics,
-    startOAuth,
-    upgradeFromGuest,
     clearError,
     dismissFirstVisit,
   }), [
@@ -256,16 +257,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     error,
     guestUsername,
     isFirstVisit,
-    login,
-    register,
+    supabaseUser,
+    supabaseAccessToken,
+    loginWithGoogle,
     continueAsGuest,
     logout,
     refreshProfile,
     updateProfile,
     syncSettings,
     syncStatistics,
-    startOAuth,
-    upgradeFromGuest,
     clearError,
     dismissFirstVisit,
   ]);

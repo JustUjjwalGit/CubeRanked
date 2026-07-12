@@ -1,9 +1,7 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  LogIn,
   LogOut,
-  UserPlus,
   User,
   Users,
   Settings,
@@ -26,7 +24,6 @@ export default function HomeScreen({
   user,
   onSettings,
   onLogin,
-  onRegister,
   onGuest,
   onProfile,
   onLogout,
@@ -43,7 +40,6 @@ export default function HomeScreen({
   user: UserProfile | null;
   onSettings: () => void;
   onLogin: () => void;
-  onRegister: () => void;
   onGuest: () => void;
   onProfile: () => void;
   onLogout: () => void;
@@ -152,23 +148,10 @@ export default function HomeScreen({
                 <LogOut size={16} />
               </button>
             </div>
-          ) : authMode === "guest" ? (
-            <div className="user-profile-widget">
-              <button type="button" className="profile-chip-btn" onClick={onLogin}>
-                <span>G</span>
-                <strong>Guest Player</strong>
-              </button>
-              <button type="button" className="auth-action-btn" onClick={onLogin}>
-                Sign In
-              </button>
-            </div>
           ) : (
             <div className="auth-buttons">
               <button type="button" className="auth-btn login" onClick={onLogin}>
-                <LogIn size={14} /> Log In
-              </button>
-              <button type="button" className="auth-btn register" onClick={onRegister}>
-                <UserPlus size={14} /> Register
+                Sign In with Google
               </button>
               <button type="button" className="auth-btn guest" onClick={onGuest}>
                 <User size={14} /> Guest

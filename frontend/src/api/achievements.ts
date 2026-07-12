@@ -1,6 +1,8 @@
 import type { AchievementsData, AchievementCheckResult, AchievementEvent } from "../features/achievements/achievement.types";
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000/api/v1`;
+const apiBaseUrl = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api/v1`
+  : `http://${window.location.hostname}:4000/api/v1`;
 const ACCESS_TOKEN_KEY = "cuberanked.auth.accessToken";
 
 function getToken(): string | null {

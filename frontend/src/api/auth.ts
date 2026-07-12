@@ -1,10 +1,8 @@
-import type { ApiFailure } from "./client";
 import type { SessionSettings, SolveRecord } from "../utils/sessionStats";
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000/api/v1`;
-const ACCESS_TOKEN_KEY = "cuberanked.auth.accessToken";
-const REFRESH_TOKEN_KEY = "cuberanked.auth.refreshToken";
-const EXPIRES_AT_KEY = "cuberanked.auth.accessTokenExpiresAt";
+const apiBaseUrl = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api/v1`
+  : `http://${window.location.hostname}:4000/api/v1`;
 
 export interface UserStatistics {
   gamesPlayed: number;
@@ -53,187 +51,57 @@ export interface UserProfile {
   placementMatchesPlayed?: number;
 }
 
-export interface AuthSession {
-  user: UserProfile;
-  accessToken: string;
-  refreshToken: string;
-  accessTokenExpiresAt: string;
-}
-
 interface ApiSuccess<T> {
   ok: true;
   data: T;
 }
 
+interface ApiFailure {
+  ok: false;
+  error: { message: string };
+}
+
 type ApiResponse<T> = ApiSuccess<T> | ApiFailure;
 
-export function getStoredTokens() {
-  return {
-    accessToken: localStorage.getItem(ACCESS_TOKEN_KEY),
-    refreshToken: localStorage.getItem(REFRESH_TOKEN_KEY),
-    accessTokenExpiresAt: localStorage.getItem(EXPIRES_AT_KEY),
-  };
+export async function fetchProfile(accessToken: string): Promise<UserProfile> {
+  return authorizedRequest<UserProfile>("/profile/me", { accessToken });
 }
 
-export function storeSessionTokens(session: AuthSession) {
-  localStorage.setItem(ACCESS_TOKEN_KEY, session.accessToken);
-  localStorage.setItem(REFRESH_TOKEN_KEY, session.refreshToken);
-  localStorage.setItem(EXPIRES_AT_KEY, session.accessTokenExpiresAt);
-}
-
-export function clearSessionTokens() {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
-  localStorage.removeItem(EXPIRES_AT_KEY);
-}
-
-/**
- * Called on app startup to check if the URL contains an OAuth session or error
- * from the server callback redirect. Clears the URL params after consuming them.
- * Returns 'session' if tokens were stored, 'error' if there was an error, or null.
- */
-export function consumeOAuthRedirect(): { type: "session" } | { type: "error"; message: string } | null {
-  const params = new URLSearchParams(window.location.search);
-  const sessionParam = params.get("oauth_session");
-  const errorParam = params.get("oauth_error");
-
-  if (sessionParam || errorParam) {
-    // Clean the URL immediately
-    const cleanUrl = window.location.pathname + window.location.hash;
-    window.history.replaceState({}, document.title, cleanUrl);
-  }
-
-  if (sessionParam) {
-    try {
-      const sessionParams = new URLSearchParams(decodeURIComponent(sessionParam));
-      const accessToken = sessionParams.get("accessToken");
-      const refreshToken = sessionParams.get("refreshToken");
-      const accessTokenExpiresAt = sessionParams.get("accessTokenExpiresAt");
-      if (accessToken && refreshToken && accessTokenExpiresAt) {
-        storeSessionTokens({ accessToken, refreshToken, accessTokenExpiresAt } as AuthSession);
-        return { type: "session" };
-      }
-    } catch {
-      // fall through
-    }
-  }
-
-  if (errorParam) {
-    return { type: "error", message: decodeURIComponent(errorParam) };
-  }
-
-  return null;
-}
-
-export async function registerAccount(input: {
-  username: string;
-  email: string;
-  password: string;
-  rememberMe: boolean;
-}): Promise<AuthSession> {
-  const session = await request<AuthSession>("/auth/register", {
-    method: "POST",
-    body: input,
-  });
-  storeSessionTokens(session);
-  return session;
-}
-
-export async function loginAccount(input: {
-  email: string;
-  password: string;
-  rememberMe: boolean;
-}): Promise<AuthSession> {
-  const session = await request<AuthSession>("/auth/login", {
-    method: "POST",
-    body: input,
-  });
-  storeSessionTokens(session);
-  return session;
-}
-
-export async function refreshSession(): Promise<AuthSession | null> {
-  const { refreshToken } = getStoredTokens();
-  if (!refreshToken) return null;
-
-  try {
-    const session = await request<AuthSession>("/auth/refresh", {
-      method: "POST",
-      body: { refreshToken },
-      skipAuth: true,
-    });
-    storeSessionTokens(session);
-    return session;
-  } catch {
-    clearSessionTokens();
-    return null;
-  }
-}
-
-export async function logoutAccount() {
-  const { refreshToken } = getStoredTokens();
-
-  try {
-    await authorizedRequest<{ loggedOut: true }>("/auth/logout", {
-      method: "POST",
-      body: { refreshToken },
-    });
-  } finally {
-    clearSessionTokens();
-  }
-}
-
-export async function fetchProfile(): Promise<UserProfile> {
-  return authorizedRequest<UserProfile>("/profile/me");
-}
-
-export async function updateProfile(input: Partial<Pick<UserProfile, "username" | "avatar" | "country" | "bio" | "theme" | "favoriteMode">>): Promise<UserProfile> {
+export async function updateProfile(accessToken: string, input: Partial<Pick<UserProfile, "username" | "avatar" | "country" | "bio" | "theme" | "favoriteMode">>): Promise<UserProfile> {
   return authorizedRequest<UserProfile>("/profile/me", {
     method: "PATCH",
     body: input,
+    accessToken,
   });
 }
 
-export async function saveCloudSettings(settings: SessionSettings): Promise<SessionSettings> {
+export async function saveCloudSettings(accessToken: string, settings: SessionSettings): Promise<SessionSettings> {
   return authorizedRequest<SessionSettings>("/settings/me", {
     method: "PUT",
     body: settings,
+    accessToken,
   });
 }
 
-export async function saveCloudStatistics(statistics: UserStatistics): Promise<UserStatistics> {
+export async function saveCloudStatistics(accessToken: string, statistics: UserStatistics): Promise<UserStatistics> {
   return authorizedRequest<UserStatistics>("/statistics/me", {
     method: "PUT",
     body: statistics,
-  });
-}
-
-export async function getOAuthProvider(provider: "google" | "github" | "discord") {
-  return request<{ provider: string; configured: boolean; authorizationUrl: string | null }>(`/auth/oauth/${provider}`);
-}
-
-async function authorizedRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  let tokens = getStoredTokens();
-
-  if (!tokens.accessToken || isExpiring(tokens.accessTokenExpiresAt)) {
-    await refreshSession();
-    tokens = getStoredTokens();
-  }
-
-  return request<T>(path, {
-    ...options,
-    accessToken: tokens.accessToken ?? undefined,
+    accessToken,
   });
 }
 
 interface RequestOptions {
   method?: string;
   body?: unknown;
-  accessToken?: string;
-  skipAuth?: boolean;
+  accessToken: string;
 }
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+async function authorizedRequest<T>(path: string, options: RequestOptions): Promise<T> {
+  return request<T>(path, options);
+}
+
+async function request<T>(path: string, options: RequestOptions): Promise<T> {
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
@@ -242,7 +110,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     headers["Content-Type"] = "application/json";
   }
 
-  if (options.accessToken && !options.skipAuth) {
+  if (options.accessToken) {
     headers.Authorization = `Bearer ${options.accessToken}`;
   }
 
@@ -259,9 +127,4 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   return payload.data;
-}
-
-function isExpiring(expiresAt: string | null): boolean {
-  if (!expiresAt) return true;
-  return new Date(expiresAt).getTime() - Date.now() < 30_000;
 }

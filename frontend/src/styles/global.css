@@ -63,6 +63,17 @@
 
 * {
   box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
+  caret-color: transparent;
+}
+
+input,
+textarea,
+[contenteditable] {
+  user-select: text;
+  -webkit-user-select: text;
+  caret-color: auto;
 }
 
 body {
@@ -798,6 +809,7 @@ button {
   padding: 24px;
   background: rgba(2, 6, 23, 0.66);
   backdrop-filter: blur(12px);
+  pointer-events: none;
 }
 
 .modal-backdrop > * {

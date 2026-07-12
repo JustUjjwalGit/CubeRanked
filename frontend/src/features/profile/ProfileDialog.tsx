@@ -127,7 +127,7 @@ export default function ProfileDialog({
                 className="ranked-gate-btn google"
                 onClick={() => {
                   onClose();
-                  void auth.startOAuth("google");
+                  void auth.loginWithGoogle();
                 }}
                 style={{ width: "auto", minHeight: "36px", padding: "0 16px", fontSize: "0.8rem" }}
               >

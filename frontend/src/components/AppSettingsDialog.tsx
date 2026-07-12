@@ -140,7 +140,6 @@ export default function AppSettingsDialog({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0, transition: { duration: 0.08 } }}
-      onClick={onClose}
     >
       <motion.section
         className="settings-dialog"

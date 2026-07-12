@@ -16,22 +16,10 @@ export const envSchema = z.object({
   SOCKET_PATH: z.string().optional().default("/v1"),
   DATABASE_URL: z.string().min(1).optional(),
   REDIS_URL: z.string().min(1).optional(),
-  AUTH_JWT_SECRET: z.string().min(16).default("dev-only-cuberanked-secret-change-me"),
-  AUTH_ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
-  AUTH_REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
   AUTH_STORE_PATH: z.string().min(1).default("data/auth-store.json"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
-  GOOGLE_CLIENT_ID: z.string().optional(),
-  GOOGLE_CLIENT_SECRET: z.string().optional(),
-  GOOGLE_REDIRECT_URI: z.string().optional(),
-}).superRefine((env, context) => {
-  if (env.NODE_ENV === "production" && env.AUTH_JWT_SECRET === "dev-only-cuberanked-secret-change-me") {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["AUTH_JWT_SECRET"],
-      message: "AUTH_JWT_SECRET must be configured in production",
-    });
-  }
+  SUPABASE_URL: z.string().min(1).optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

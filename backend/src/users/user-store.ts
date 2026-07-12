@@ -27,7 +27,6 @@ export interface StoredUser {
   id: string;
   username: string;
   email: string;
-  passwordHash: string;
   avatar: string | null;
   country: string | null;
   bio: string;
@@ -38,8 +37,11 @@ export interface StoredUser {
   statistics: StoredStatistics;
   createdAt: string;
   updatedAt: string;
-  googleId?: string;
-  provider?: "email" | "google";
+  supabaseId?: string;
+  /** The Google display name at last sync — if username still matches, we auto-update it on next login */
+  googleUsername?: string;
+  /** The Google avatar URL at last sync — if avatar still matches, we auto-update it on next login */
+  googleAvatar?: string;
   rating?: number;
   peakRating?: number;
   peakElo?: number;
@@ -66,18 +68,8 @@ export interface StoredUser {
   recentPlayers?: Array<{ userId: string; username: string; avatar: string | null; playedAt: string }>;
 }
 
-export interface StoredRefreshToken {
-  id: string;
-  userId: string;
-  tokenHash: string;
-  createdAt: string;
-  expiresAt: string;
-  revokedAt: string | null;
-}
-
 interface StoreData {
   users: StoredUser[];
-  refreshTokens: StoredRefreshToken[];
 }
 
 const DEFAULT_SETTINGS: StoredSettings = {
@@ -132,74 +124,69 @@ export class UserStore {
     return data.users.find((user) => user.username.toLowerCase() === normalizedUsername) ?? null;
   }
 
-  async findUserByGoogleId(googleId: string): Promise<StoredUser | null> {
+  async findUserBySupabaseId(supabaseId: string): Promise<StoredUser | null> {
     const data = await this.read();
-    return data.users.find((user) => user.googleId === googleId) ?? null;
+    return data.users.find((user) => user.supabaseId === supabaseId) ?? null;
   }
 
-  async createUser(input: {
-    username: string;
-    email: string;
-    passwordHash: string;
-  }): Promise<StoredUser> {
-    return this.write((data) => {
-      const now = new Date().toISOString();
-      const user: StoredUser = {
-        id: randomUUID(),
-        username: input.username,
-        email: normalizeEmail(input.email),
-        passwordHash: input.passwordHash,
-        avatar: null,
-        country: null,
-        bio: "",
-        theme: "dark",
-        favoriteMode: "Practice",
-        status: "online",
-        settings: { ...DEFAULT_SETTINGS },
-        statistics: { ...DEFAULT_STATISTICS, practiceHistory: [] },
-        createdAt: now,
-        updatedAt: now,
-        rating: 1200,
-        peakRating: 1200,
-        peakElo: 1200,
-        streak: 0,
-        seasonRating: 1200,
-        seasonPeak: 1200,
-        globalPeak: 1200,
-        winRate: 0,
-        glicko: { rating: 1500, rd: 350, vol: 0.06 },
-        placementMatchesPlayed: 0,
-        friends: [],
-        friendRequests: [],
-        blockedUsers: [],
-        privacy: {
-          showOnlineStatus: true,
-          allowFriendRequests: true,
-          allowSpectators: true,
-          allowPrivateInvites: true,
-        },
-        recentPlayers: [],
-      };
-
-      data.users.push(user);
-      return user;
-    });
-  }
-
-  async createGoogleUser(input: {
-    googleId: string;
+  async findOrCreateUserFromSupabase(input: {
+    supabaseId: string;
     email: string;
     username: string;
     avatar: string | null;
+    googleUsername: string;
+    googleAvatar: string | undefined;
   }): Promise<StoredUser> {
+    const existing = await this.findUserBySupabaseId(input.supabaseId);
+    if (existing) {
+      const changes: Record<string, unknown> = {};
+
+      // Auto-update username from Google only if the user hasn't customized it
+      if (existing.username === existing.googleUsername && input.username !== existing.username) {
+        changes.username = input.username;
+        changes.googleUsername = input.googleUsername;
+      } else if (!existing.googleUsername) {
+        changes.googleUsername = input.googleUsername;
+      }
+
+      // Auto-update avatar from Google only if the user hasn't customized it
+      if (existing.avatar === existing.googleAvatar && input.avatar !== existing.avatar) {
+        changes.avatar = input.avatar ?? undefined;
+        changes.googleAvatar = input.googleAvatar ?? undefined;
+      } else if (!existing.googleAvatar) {
+        changes.googleAvatar = input.googleAvatar ?? undefined;
+      }
+
+      if (Object.keys(changes).length > 0) {
+        await this.updateUser(existing.id, changes as any);
+      }
+      return existing;
+    }
+
+    const byEmail = await this.findUserByEmail(input.email);
+    if (byEmail) {
+      const updated = await this.updateUser(byEmail.id, { supabaseId: input.supabaseId as any });
+      if (updated) return updated;
+    }
+
     return this.write((data) => {
       const now = new Date().toISOString();
+      const baseName = input.username.replace(/[^a-zA-Z0-9]/g, "").slice(0, 18) || "Player";
+      let username = baseName;
+      let attempt = 0;
+      while (data.users.find((u) => u.username.toLowerCase() === username.toLowerCase())) {
+        attempt++;
+        username = `${baseName}${attempt}`;
+      }
+
       const user: StoredUser = {
         id: randomUUID(),
-        username: input.username,
+        supabaseId: input.supabaseId,
+        username,
         email: normalizeEmail(input.email),
-        passwordHash: "",
         avatar: input.avatar,
+        googleUsername: input.googleUsername,
+        googleAvatar: input.googleAvatar ?? undefined,
         country: null,
         bio: "",
         theme: "dark",
@@ -209,8 +196,6 @@ export class UserStore {
         statistics: { ...DEFAULT_STATISTICS, practiceHistory: [] },
         createdAt: now,
         updatedAt: now,
-        googleId: input.googleId,
-        provider: "google",
         rating: 1200,
         peakRating: 1200,
         peakElo: 1200,
@@ -238,19 +223,7 @@ export class UserStore {
     });
   }
 
-  async linkGoogleAccount(userId: string, googleId: string, avatar: string | null): Promise<StoredUser | null> {
-    return this.write((data) => {
-      const user = data.users.find((item) => item.id === userId);
-      if (!user) return null;
-      user.googleId = googleId;
-      user.provider = "google";
-      if (avatar && !user.avatar) user.avatar = avatar;
-      user.updatedAt = new Date().toISOString();
-      return user;
-    });
-  }
-
-  async updateUser(id: string, patch: Partial<Pick<StoredUser, "username" | "avatar" | "country" | "bio" | "theme" | "favoriteMode" | "status" | "rating" | "glicko" | "placementMatchesPlayed" | "peakRating" | "streak" | "seasonRating" | "peakElo" | "seasonPeak" | "globalPeak" | "winRate">>): Promise<StoredUser | null> {
+  async updateUser(id: string, patch: Partial<Pick<StoredUser, "username" | "avatar" | "country" | "bio" | "theme" | "favoriteMode" | "status" | "rating" | "glicko" | "placementMatchesPlayed" | "peakRating" | "streak" | "seasonRating" | "peakElo" | "seasonPeak" | "globalPeak" | "winRate" | "supabaseId" | "googleUsername" | "googleAvatar">>): Promise<StoredUser | null> {
     return this.write((data) => {
       const user = data.users.find((item) => item.id === id);
       if (!user) return null;
@@ -283,42 +256,6 @@ export class UserStore {
     });
   }
 
-  async createRefreshToken(userId: string, ttlDays: number): Promise<{ token: string; record: StoredRefreshToken }> {
-    const token = randomUUID();
-    const record: StoredRefreshToken = {
-      id: randomUUID(),
-      userId,
-      tokenHash: hashToken(token),
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + ttlDays * 86_400_000).toISOString(),
-      revokedAt: null,
-    };
-
-    await this.write((data) => {
-      data.refreshTokens.push(record);
-      return record;
-    });
-
-    return { token, record };
-  }
-
-  async findRefreshToken(token: string): Promise<StoredRefreshToken | null> {
-    const data = await this.read();
-    const tokenHash = hashToken(token);
-    return data.refreshTokens.find((record) => record.tokenHash === tokenHash) ?? null;
-  }
-
-  async revokeRefreshToken(token: string): Promise<void> {
-    const tokenHash = hashToken(token);
-    await this.write((data) => {
-      const record = data.refreshTokens.find((item) => item.tokenHash === tokenHash);
-      if (record) {
-        record.revokedAt = new Date().toISOString();
-      }
-      return record ?? null;
-    });
-  }
-
   async sendFriendRequest(fromId: string, toUsername: string): Promise<{ success: boolean; error?: string; request?: any }> {
     return this.write((data) => {
       const fromUser = data.users.find((u) => u.id === fromId);
@@ -332,12 +269,10 @@ export class UserStore {
         return { success: false, error: "You cannot add yourself" };
       }
 
-      // Check if already friends
       if (fromUser.friends?.includes(toUser.id)) {
         return { success: false, error: "Already friends" };
       }
 
-      // Check if blocked
       if (toUser.blockedUsers?.includes(fromUser.id)) {
         return { success: false, error: "You are blocked by this user" };
       }
@@ -345,12 +280,10 @@ export class UserStore {
         return { success: false, error: "Unblock this user first" };
       }
 
-      // Check if incoming request already exists
       const existingIncoming = fromUser.friendRequests?.find(
         (r) => r.fromId === toUser.id && r.status === "pending"
       );
       if (existingIncoming) {
-        // Automatically accept the request!
         if (!fromUser.friends) fromUser.friends = [];
         if (!toUser.friends) toUser.friends = [];
         fromUser.friends.push(toUser.id);
@@ -359,7 +292,6 @@ export class UserStore {
         return { success: true, error: "accepted_automatically" };
       }
 
-      // Check if request already sent
       const existingRequest = toUser.friendRequests?.find(
         (r) => r.fromId === fromUser.id && r.status === "pending"
       );
@@ -367,7 +299,6 @@ export class UserStore {
         return { success: false, error: "Friend request already sent" };
       }
 
-      // Add pending request
       if (!toUser.friendRequests) toUser.friendRequests = [];
       const newRequest = {
         fromId: fromUser.id,
@@ -388,7 +319,6 @@ export class UserStore {
       const friend = data.users.find((u) => u.id === fromId);
       if (!user || !friend) return { success: false };
 
-      // Remove from friend requests
       user.friendRequests = user.friendRequests?.filter((r) => r.fromId !== fromId) || [];
 
       if (accept) {
@@ -427,7 +357,6 @@ export class UserStore {
         if (!user.blockedUsers.includes(blockId)) {
           user.blockedUsers.push(blockId);
         }
-        // Remove from friends list
         user.friends = user.friends?.filter((id) => id !== blockId) || [];
         if (target) {
           target.friends = target.friends?.filter((id) => id !== userId) || [];
@@ -460,8 +389,7 @@ export class UserStore {
       if (!user || !target) return false;
 
       if (!user.recentPlayers) user.recentPlayers = [];
-      
-      // Filter out existing
+
       user.recentPlayers = user.recentPlayers.filter((p) => p.userId !== recentId);
       user.recentPlayers.unshift({
         userId: target.id,
@@ -470,7 +398,6 @@ export class UserStore {
         playedAt: new Date().toISOString(),
       });
 
-      // Keep last 15 players
       user.recentPlayers = user.recentPlayers.slice(0, 15);
       return true;
     });
@@ -481,7 +408,7 @@ export class UserStore {
       const raw = await readFile(this.filePath, "utf8");
       return JSON.parse(raw) as StoreData;
     } catch {
-      return { users: [], refreshTokens: [] };
+      return { users: [] };
     }
   }
 
@@ -497,10 +424,6 @@ export class UserStore {
     this.pending = operation.then(() => undefined, () => undefined);
     return operation;
   }
-}
-
-export function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("base64url");
 }
 
 function normalizeEmail(email: string): string {

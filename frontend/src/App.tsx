@@ -48,6 +48,7 @@ import {
   type BotOpponent,
   type RaceOpponentSnapshot,
 } from "./utils/botRace";
+import { makeMove, MOVE_FACES, parseMove, type Face } from "./utils/cubeEngine";
 import { generateWcaScramble, scrambleToString, type Penalty } from "./utils/scramble";
 import {
   createSolveRecord,
@@ -111,7 +112,6 @@ import ResultsModal from "./components/ResultsModal";
 import PauseMenu from "./components/PauseMenu";
 import PracticeSettingsPopover from "./components/PracticeSettingsPopover";
 import AppSettingsDialog from "./components/AppSettingsDialog";
-import AuthDialog from "./features/auth/AuthDialog";
 import ProfileDialog from "./features/profile/ProfileDialog";
 import KeyboardCheatSheet from "./components/KeyboardCheatSheet";
 import LearnMode from "./features/learn/LearnMode";
@@ -145,7 +145,7 @@ const playModes = [
 
 type PlayableStage = Extract<GameStage, "COUNTDOWN" | "READY" | "INSPECTION" | "PLAYING" | "SOLVED" | "RESULT">;
 type SettingsCategory = "General" | "Appearance" | "Camera" | "Controls" | "Cube" | "Audio";
-type AuthModal = "none" | "login" | "register" | "profile";
+type AuthModal = "none" | "profile";
 
 interface BotRaceStats {
   wins: number;
@@ -1343,6 +1343,14 @@ export default function App() {
   useEffect(() => {
     if (overlay !== "NONE") return;
 
+    console.log({
+      stage,
+      cubeLocked: activeMove !== null,
+      inputBlocked: overlay !== "NONE" || stage === "MODE_SELECT" || stage === "MATCH_LOADING" || stage === "RESULT",
+      solveStarted: solveStartRef.current > 0,
+      inspectionTime: inspectionElapsedMs,
+    });
+
     if (stage === "READY" && isBotRace) {
       solveStartRef.current = performance.now();
       replayMovesRef.current = [];
@@ -1403,6 +1411,20 @@ export default function App() {
         const inspectionMs = now - inspectionStartRef.current;
         setInspectionElapsedMs(inspectionMs);
         setPenalty(inspectionMs > 17_000 ? "DNF" : inspectionMs > 15_000 ? "+2" : "none");
+        console.log({
+          stage,
+          cubeLocked: activeMove !== null,
+          inputBlocked: overlay !== "NONE",
+          solveStarted: solveStartRef.current > 0,
+          inspectionTime: inspectionElapsedMs,
+        });
+        if (inspectionMs >= 15_000 && solveStartRef.current === 0) {
+          solveStartRef.current = performance.now();
+          replayMovesRef.current = [];
+          setElapsedMs(0);
+          setSolveMoveCount(0);
+          dispatch({ type: "FIRST_MOVE" });
+        }
       }
 
       frame = requestAnimationFrame(update);
@@ -1581,11 +1603,7 @@ export default function App() {
             }}
             onGoogle={() => {
               auth.dismissFirstVisit();
-              void auth.startOAuth("google");
-            }}
-            onEmail={() => {
-              auth.dismissFirstVisit();
-              setAuthModal("login");
+              void auth.loginWithGoogle();
             }}
           />
         ) : null}
@@ -1601,10 +1619,9 @@ export default function App() {
               authMode={auth.mode}
               user={auth.user}
               onSettings={() => dispatch({ type: "OPEN_APP_SETTINGS" })}
-              onLogin={() => setAuthModal("login")}
-              onRegister={() => setAuthModal("register")}
+              onLogin={() => void auth.loginWithGoogle()}
               onGuest={auth.continueAsGuest}
-              onProfile={() => setAuthModal(auth.mode === "authenticated" ? "profile" : "login")}
+              onProfile={() => setAuthModal("profile")}
               onLogout={() => void auth.logout().catch(handleAuthError)}
               onPractice={() => dispatch({ type: "SELECT_PRACTICE" })}
               onBotRace={() => dispatch({ type: "SELECT_BOT_RACE" })}
@@ -1757,40 +1774,7 @@ export default function App() {
         ) : null}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {authModal === "login" || authModal === "register" ? (
-          <AuthDialog
-            mode={authModal}
-            error={auth.error}
-            onClose={() => {
-              auth.clearError();
-              setAuthModal("none");
-            }}
-            onMode={setAuthModal}
-            onGuest={() => {
-              auth.continueAsGuest();
-              setAuthModal("none");
-            }}
-            onLogin={async (input) => {
-              try {
-                await auth.login(input);
-                setAuthModal("none");
-              } catch (error) {
-                handleAuthError(error);
-              }
-            }}
-            onRegister={async (input) => {
-              try {
-                await auth.register(input);
-                setAuthModal("none");
-              } catch (error) {
-                handleAuthError(error);
-              }
-            }}
-            onOAuth={(provider) => void auth.startOAuth(provider).catch(handleAuthError)}
-          />
-        ) : null}
-      </AnimatePresence>
+
 
       <AnimatePresence>
         {authModal === "profile" && (auth.user || auth.mode === "guest") ? (
@@ -1820,15 +1804,7 @@ export default function App() {
             onClose={() => setRankedGateOpen(false)}
             onGoogle={() => {
               setRankedGateOpen(false);
-              void auth.startOAuth("google");
-            }}
-            onEmail={() => {
-              setRankedGateOpen(false);
-              setAuthModal("login");
-            }}
-            onRegister={() => {
-              setRankedGateOpen(false);
-              setAuthModal("register");
+              void auth.loginWithGoogle();
             }}
           />
         ) : null}

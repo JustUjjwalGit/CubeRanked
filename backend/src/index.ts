@@ -1,5 +1,7 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import { loadEnv } from "./config/env.js";
+
+dotenv.config({ path: ".env.local" });
 import { createApp } from "./app/create-app.js";
 
 async function main() {

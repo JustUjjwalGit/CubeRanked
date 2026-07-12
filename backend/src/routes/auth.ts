@@ -6,27 +6,6 @@ import { UserStore } from "../users/user-store.js";
 import { successResponse } from "../utils/response.js";
 import { ValidationError } from "../utils/errors.js";
 
-const registerSchema = z.object({
-  username: z.string().trim().min(3).max(24).regex(/^[a-zA-Z0-9_]+$/, "Use letters, numbers, and underscores only"),
-  email: z.string().trim().email(),
-  password: z.string().min(8).max(128),
-  rememberMe: z.boolean().optional(),
-});
-
-const loginSchema = z.object({
-  email: z.string().trim().email(),
-  password: z.string().min(1),
-  rememberMe: z.boolean().optional(),
-});
-
-const refreshSchema = z.object({
-  refreshToken: z.string().min(1),
-});
-
-const logoutSchema = z.object({
-  refreshToken: z.string().min(1).nullable().optional(),
-});
-
 const profileSchema = z.object({
   username: z.string().trim().min(3).max(24).regex(/^[a-zA-Z0-9_]+$/).optional(),
   avatar: z.string().trim().url().nullable().optional().or(z.literal("")),
@@ -60,63 +39,8 @@ export async function registerAuthRoutes(app: FastifyInstance) {
   const authService = new AuthService(app.env, new UserStore(app.env));
   const requireAuth = createRequireAuth(authService);
 
-  app.post("/auth/register", async (request, reply) => {
-    const input = registerSchema.parse(request.body);
-    const session = await authService.register(input);
-    return reply.status(201).send(successResponse(session));
-  });
-
-  app.post("/auth/login", async (request, reply) => {
-    const input = loginSchema.parse(request.body);
-    const session = await authService.login(input);
-    return reply.status(200).send(successResponse(session));
-  });
-
-  app.post("/auth/refresh", async (request, reply) => {
-    const input = refreshSchema.parse(request.body);
-    const session = await authService.refresh(input.refreshToken);
-    return reply.status(200).send(successResponse(session));
-  });
-
-  app.post("/auth/logout", { preHandler: requireAuth }, async (request, reply) => {
-    const input = logoutSchema.parse(request.body ?? {});
-    await authService.logout(input.refreshToken ?? null, request.auth?.userId);
-    return reply.status(200).send(successResponse({ loggedOut: true }));
-  });
-
   app.post("/auth/guest", async (_request, reply) => {
     return reply.status(200).send(successResponse({ user: createGuestProfile() }));
-  });
-
-  app.get("/auth/oauth/:provider", async (request, reply) => {
-    const params = z.object({ provider: z.string() }).parse(request.params);
-    return reply.status(200).send(successResponse(authService.getOAuthProvider(params.provider)));
-  });
-
-  // Google OAuth callback — exchanges the code and redirects to frontend with session tokens
-  app.get("/auth/oauth/google/callback", async (request, reply) => {
-    const query = z.object({ code: z.string().optional(), error: z.string().optional() }).parse(request.query);
-
-    // FRONTEND_URL is the single canonical frontend URL for redirect.
-    // FRONTEND_ORIGIN may be a comma-separated list for CORS — not for redirect.
-    const frontendUrl = app.env.FRONTEND_URL ?? app.env.FRONTEND_ORIGIN?.split(",")[0]?.trim() ?? "http://localhost:5173";
-
-    if (query.error || !query.code) {
-      return reply.redirect(`${frontendUrl}?oauth_error=${encodeURIComponent(query.error ?? "access_denied")}`);
-    }
-
-    try {
-      const session = await authService.handleGoogleCallback(query.code);
-      const params = new URLSearchParams({
-        accessToken: session.accessToken,
-        refreshToken: session.refreshToken,
-        accessTokenExpiresAt: session.accessTokenExpiresAt,
-      });
-      return reply.redirect(`${frontendUrl}?oauth_session=${encodeURIComponent(params.toString())}`);
-    } catch (err) {
-      app.log.error(err, "Google OAuth callback failed");
-      return reply.redirect(`${frontendUrl}?oauth_error=${encodeURIComponent("Authentication failed")}`);
-    }
   });
 
   app.get("/profile/me", { preHandler: requireAuth }, async (request, reply) => {
