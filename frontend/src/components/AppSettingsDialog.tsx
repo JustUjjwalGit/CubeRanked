@@ -5,9 +5,7 @@ import {
   DEFAULT_SETTINGS,
   type SessionSettings,
   type Face,
-  type AccentColor,
   type CubeStyle,
-  type StartupPage,
   type CameraFace,
   type AudioSettings,
 } from "../utils/sessionStats";
@@ -20,24 +18,11 @@ type SettingsCategory =
   | "Cube"
   | "Audio";
 
-const ACCENTS: { key: AccentColor; label: string }[] = [
-  { key: "indigo", label: "Indigo" },
-  { key: "cyan", label: "Cyan" },
-  { key: "violet", label: "Violet" },
-  { key: "emerald", label: "Emerald" },
-];
-
 const CUBE_STYLES: { key: CubeStyle; label: string; desc: string }[] = [
-  { key: "classic", label: "Classic", desc: "Current appearance" },
-  { key: "competition", label: "Competition", desc: "WCA style stickers" },
-  { key: "minimal", label: "Minimal", desc: "Flat faces, thin borders" },
-  { key: "rounded", label: "Rounded", desc: "Rounded stickers, softer edges" },
-];
-
-const STARTUP_PAGES: { key: StartupPage; label: string }[] = [
-  { key: "home", label: "Home" },
-  { key: "profile", label: "Profile" },
-  { key: "play", label: "Play" },
+  { key: "classic", label: "Classic", desc: "Original Rubik's cube appearance" },
+  { key: "speedcube", label: "Speedcube", desc: "Smaller bevels, brighter plastic, modern GAN/Moyu style" },
+  { key: "stickerless", label: "Stickerless", desc: "Pure plastic colors, no sticker borders" },
+  { key: "minimal", label: "Minimal", desc: "Flat colors, very thin borders, clean esports style" },
 ];
 
 const CAMERA_FACES: { key: CameraFace; label: string }[] = [
@@ -48,10 +33,6 @@ const CAMERA_FACES: { key: CameraFace; label: string }[] = [
   { key: "red", label: "Red" },
   { key: "orange", label: "Orange" },
 ];
-
-function setCssVar(name: string, value: string) {
-  document.documentElement.style.setProperty(name, value);
-}
 
 export default function AppSettingsDialog({
   category,
@@ -86,19 +67,10 @@ export default function AppSettingsDialog({
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [listeningFace, onSettings, settings.keybindings]);
 
-  // Sync accent color CSS variable
   useEffect(() => {
-    const colorMap: Record<AccentColor, string> = {
-      indigo: "#6366f1",
-      cyan: "#06b6d4",
-      violet: "#8b5cf6",
-      emerald: "#10b981",
-    };
-    setCssVar("--accent-color", colorMap[settings.accentColor] ?? "#6366f1");
     document.documentElement.dataset.theme = settings.theme;
     document.documentElement.dataset.cubeStyle = settings.cubeStyle;
-    document.documentElement.dataset.accent = settings.accentColor;
-  }, [settings.accentColor, settings.theme, settings.cubeStyle]);
+  }, [settings.theme, settings.cubeStyle]);
 
   const handleExport = useCallback(() => {
     const blob = new Blob([JSON.stringify(settings, null, 2)], { type: "application/json" });
@@ -178,23 +150,8 @@ export default function AppSettingsDialog({
             {category === "General" && (
               <div className="settings-scroll">
                 <div className="settings-section">
-                  <h4>Startup</h4>
-                  <div className="settings-chip-group">
-                    {STARTUP_PAGES.map((p) => (
-                      <button
-                        key={p.key}
-                        type="button"
-                        className={`settings-chip ${settings.startupPage === p.key ? "active" : ""}`}
-                        onClick={() => onSettings({ startupPage: p.key })}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="settings-section">
                   <h4>Default Camera Face</h4>
+                  <p className="settings-hint">Determines initial camera orientation and first visible face when entering Practice, Bot Race, or Ranked.</p>
                   <div className="settings-chip-group">
                     {CAMERA_FACES.map((f) => (
                       <button
@@ -244,30 +201,10 @@ export default function AppSettingsDialog({
                 </div>
 
                 <div className="settings-section">
-                  <h4>Accent Color</h4>
-                  <div className="settings-color-grid">
-                    {ACCENTS.map((a) => (
-                      <button
-                        key={a.key}
-                        type="button"
-                        className={`settings-color-btn ${settings.accentColor === a.key ? "active" : ""}`}
-                        style={{ "--swatch": `var(--accent-${a.key})` } as React.CSSProperties}
-                        onClick={() => onSettings({ accentColor: a.key })}
-                        title={a.label}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="settings-section">
                   <h4>Display</h4>
                   <label className="range-row compact">
                     <span>UI Scale ({Math.round(settings.uiScale * 100)}%)</span>
                     <input type="range" min="0.8" max="1.2" step="0.05" value={settings.uiScale} onChange={(e) => onSettings({ uiScale: Number(e.target.value) })} />
-                  </label>
-                  <label className="switch-row compact">
-                    <span>Compact Mode</span>
-                    <input type="checkbox" checked={settings.compactMode} onChange={(e) => onSettings({ compactMode: e.target.checked })} />
                   </label>
                   <label className="switch-row compact">
                     <span>Reduced Motion</span>
@@ -284,17 +221,17 @@ export default function AppSettingsDialog({
                   <div className="settings-chip-group">
                     <button
                       type="button"
-                      className={`settings-chip ${settings.cameraMode === "competitive" ? "active" : ""}`}
-                      onClick={() => onSettings({ cameraMode: "competitive" })}
-                    >
-                      Competitive
-                    </button>
-                    <button
-                      type="button"
                       className={`settings-chip ${settings.cameraMode === "free-orbit" ? "active" : ""}`}
                       onClick={() => onSettings({ cameraMode: "free-orbit" })}
                     >
                       Free Orbit
+                    </button>
+                    <button
+                      type="button"
+                      className={`settings-chip ${settings.cameraMode === "competitive" ? "active" : ""}`}
+                      onClick={() => onSettings({ cameraMode: "competitive" })}
+                    >
+                      Fixed Competitive
                     </button>
                   </div>
                   <p className="settings-hint">
@@ -453,9 +390,6 @@ export default function AppSettingsDialog({
                 </div>
               </div>
             )}
-
-            {/* Settings QoL footer */}
-            {category !== "Cube" && category !== "Audio" && category !== "General" && category !== "Appearance" && category !== "Camera" && category !== "Controls" ? null : null}
 
             <div className="settings-qol-row">
               <input

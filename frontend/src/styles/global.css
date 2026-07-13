@@ -51,8 +51,8 @@
   --accent-cyan: #0891b2;
   --accent-violet: #7c3aed;
   --accent-emerald: #059669;
-  --glow-purple: rgba(124, 58, 237, 0.08);
-  --glow-blue: rgba(79, 70, 229, 0.07);
+  --glow-purple: rgba(79, 70, 229, 0.07);
+  --glow-blue: rgba(59, 130, 246, 0.09);
   --grid-color: rgba(148, 163, 184, 0.08);
   --nav-bg: rgba(255, 255, 255, 0.88);
   --frost-bg: rgba(0, 0, 0, 0.03);
@@ -133,9 +133,9 @@ button {
 }
 
 :root[data-theme="light"] .home-bg {
-  background: radial-gradient(circle at 15% 15%, rgba(99, 102, 241, 0.06), transparent 45%),
-              radial-gradient(circle at 85% 85%, rgba(124, 58, 237, 0.07), transparent 50%),
-              radial-gradient(circle at 50% 50%, rgba(79, 70, 229, 0.04), transparent 40%),
+  background: radial-gradient(circle at 15% 15%, rgba(59, 130, 246, 0.07), transparent 45%),
+              radial-gradient(circle at 85% 85%, rgba(99, 102, 241, 0.06), transparent 50%),
+              radial-gradient(circle at 50% 50%, rgba(96, 165, 250, 0.04), transparent 40%),
               linear-gradient(135deg, #eef2f6 0%, #f0f4f9 60%, #e8ecf0 100%);
 }
 
@@ -147,6 +147,10 @@ button {
   background: radial-gradient(circle, transparent 25%, rgba(3, 3, 5, 0.82) 100%);
   z-index: 5;
   pointer-events: none;
+}
+
+:root[data-theme="light"] .home-bg::before {
+  background: radial-gradient(circle, transparent 30%, rgba(200, 210, 225, 0.55) 100%);
 }
 
 /* Noise texture style */
@@ -994,7 +998,6 @@ button {
 .top-right-cluster,
 .developer-overlay,
 .practice-popover,
-.keyboard-cheat-sheet,
 .kbd-panel {
   pointer-events: auto;
 }
@@ -1147,64 +1150,6 @@ button {
 
 .opponent-card.status-finished {
   border-color: rgba(52, 211, 153, 0.34);
-}
-
-.keyboard-cheat-sheet {
-  position: absolute;
-  left: 24px;
-  bottom: 24px;
-  display: grid;
-  gap: 6px;
-  width: min(292px, calc(100vw - 48px));
-  padding: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.15);
-  border-radius: 18px;
-  background: rgba(15, 23, 42, 0.46);
-  color: #cbd5e1;
-  backdrop-filter: blur(18px) saturate(1.1);
-}
-
-.keyboard-cheat-sheet > div {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 3px;
-  color: #93c5fd;
-  font-size: 0.7rem;
-  font-weight: 950;
-  text-transform: uppercase;
-}
-
-.keyboard-cheat-sheet span {
-  display: grid;
-  grid-template-columns: 48px 1fr 76px 1fr;
-  align-items: center;
-  gap: 7px;
-  font-size: 0.72rem;
-  font-weight: 800;
-}
-
-.keyboard-cheat-sheet kbd {
-  display: inline-grid;
-  place-items: center;
-  min-height: 22px;
-  padding: 0 6px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.07);
-  color: #f8fafc;
-  font-family: inherit;
-  font-size: 0.68rem;
-  font-weight: 930;
-}
-
-.keyboard-cheat-sheet strong {
-  overflow: hidden;
-  color: #94a3b8;
-  font-size: 0.7rem;
-  font-weight: 820;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .compact-timer {
@@ -1974,31 +1919,6 @@ button {
   color: #bfdbfe;
 }
 
-.settings-color-grid {
-  display: flex;
-  gap: 10px;
-}
-
-.settings-color-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  background: var(--swatch);
-  cursor: pointer;
-  transition: all 140ms ease;
-  position: relative;
-}
-
-.settings-color-btn:hover {
-  transform: scale(1.15);
-}
-
-.settings-color-btn.active {
-  border-color: #f8fafc;
-  box-shadow: 0 0 0 2px var(--swatch), 0 0 16px color-mix(in srgb, var(--swatch) 40%, transparent);
-}
-
 .settings-qol-row {
   margin-top: 20px;
   padding-top: 14px;
@@ -2349,9 +2269,9 @@ button {
     justify-content: flex-end;
   }
 
-  .keyboard-cheat-sheet {
+  .kbd-panel {
     left: 14px;
-    bottom: 14px;
+    top: 72px;
     width: min(260px, calc(100vw - 28px));
   }
 
@@ -3273,7 +3193,7 @@ button {
 
 .kbd-panel {
   position: absolute;
-  top: 56px;
+  top: 80px;
   left: 20px;
   width: 200px;
   padding: 10px;
@@ -6909,3 +6829,126 @@ body,
   }
 }
 .rarity-border-legendary { border-color: rgba(250,204,21,0.6); }
+
+/* ================================================================
+   UI SCALE — applied via --ui-scale CSS variable
+   ================================================================ */
+
+:root {
+  --ui-scale: 1;
+}
+
+body {
+  font-size: calc(0.875rem * var(--ui-scale));
+}
+
+.settings-dialog,
+.play-modal,
+.auth-dialog,
+.profile-dialog,
+.results-modal,
+.pause-menu,
+.practice-popover,
+.loading-card,
+.queue-card,
+.opponent-card,
+.compact-timer,
+.client-toast {
+  transform: scale(var(--ui-scale));
+  transform-origin: center center;
+}
+
+.home-screen,
+.client-shell,
+.practice-screen {
+  font-size: calc(1em * var(--ui-scale));
+}
+
+/* ================================================================
+   REDUCED MOTION — Kill animations when enabled
+   ================================================================ */
+
+:root[data-reduced-motion="true"] *,
+:root[data-reduced-motion="true"] *::before,
+:root[data-reduced-motion="true"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.1s !important;
+  transition-delay: 0s !important;
+}
+
+:root[data-reduced-motion="true"] .particle,
+:root[data-reduced-motion="true"] .light-streaks,
+:root[data-reduced-motion="true"] .glow-blob-1,
+:root[data-reduced-motion="true"] .glow-blob-2 {
+  animation: none !important;
+  opacity: 0 !important;
+}
+
+:root[data-reduced-motion="true"] .home-bg::before {
+  opacity: 0.5;
+}
+
+:root[data-reduced-motion="true"] .particles-container {
+  display: none;
+}
+
+:root[data-reduced-motion="true"] .lobby-mode-card::after,
+:root[data-reduced-motion="true"] .auth-buttons button::after,
+:root[data-reduced-motion="true"] .footer-settings-btn::after,
+:root[data-reduced-motion="true"] .profile-chip-btn::after {
+  display: none;
+}
+
+:root[data-reduced-motion="true"] button:hover:not(:disabled) {
+  transform: none;
+}
+
+:root[data-reduced-motion="true"] .lobby-mode-card:hover {
+  transform: none;
+}
+
+:root[data-reduced-motion="true"] .settings-chip:hover,
+:root[data-reduced-motion="true"] .mode-card:hover {
+  transform: none;
+}
+
+/* ================================================================
+   CUBE STYLES — applied via [data-cube-style] on <html>
+   ================================================================ */
+
+:root[data-cube-style="speedcube"] {
+  --cube-body-color: #1a1f2e;
+  --cube-body-roughness: 0.35;
+  --cube-body-metalness: 0.15;
+  --cube-bevel-radius: 0.025;
+  --sticker-roughness: 0.25;
+  --sticker-metalness: 0.08;
+}
+
+:root[data-cube-style="stickerless"] {
+  --cube-body-color: #1e2433;
+  --cube-body-roughness: 0.5;
+  --cube-body-metalness: 0.05;
+  --cube-bevel-radius: 0.035;
+  --sticker-roughness: 0.35;
+  --sticker-metalness: 0.02;
+}
+
+:root[data-cube-style="minimal"] {
+  --cube-body-color: #11151f;
+  --cube-body-roughness: 0.7;
+  --cube-body-metalness: 0.0;
+  --cube-bevel-radius: 0.015;
+  --sticker-roughness: 0.5;
+  --sticker-metalness: 0.0;
+}
+
+:root[data-cube-style="classic"] {
+  --cube-body-color: #151923;
+  --cube-body-roughness: 0.62;
+  --cube-body-metalness: 0.1;
+  --cube-bevel-radius: 0.045;
+  --sticker-roughness: 0.44;
+  --sticker-metalness: 0.04;
+}

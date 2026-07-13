@@ -77,6 +77,9 @@ export default function PracticeScreen({
         cameraInvertVertical={settings.cameraInvertVertical}
         cameraSensitivity={settings.cameraSensitivity}
         cameraZoomSpeed={settings.cameraZoomSpeed}
+        defaultCameraFace={settings.defaultCameraFace}
+        cubeStyle={settings.cubeStyle}
+        reducedMotion={settings.reducedMotion}
       />
 
       {settings.showFpsCounter ? <FpsCounter /> : null}

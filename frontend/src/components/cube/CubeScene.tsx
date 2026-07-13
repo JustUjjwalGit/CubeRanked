@@ -18,12 +18,22 @@ import {
   type Vec3,
 } from "../../utils/cubeEngine";
 import { useCubeStore } from "../../state/cubeStore";
+import type { CameraFace, CubeStyle } from "../../utils/sessionStats";
 
 const CUBIE_SIZE = 0.92;
 const CUBIE_SPACING = 0.98;
 const STICKER_SIZE = 0.68;
 const STICKER_DEPTH = 0.032;
 const STICKER_OFFSET = CUBIE_SIZE / 2 + STICKER_DEPTH / 2 + 0.004;
+
+const FACE_POSITIONS: Record<CameraFace, [number, number, number]> = {
+  white: [0.001, 8.5, 0],
+  yellow: [0.001, -8.5, 0],
+  green: [8.5, 0, 0],
+  blue: [-8.5, 0, 0],
+  red: [0, 0, 8.5],
+  orange: [0, 0, -8.5],
+};
 
 const FACE_NORMALS: Record<string, Vec3> = {
   U: [0, 1, 0],
@@ -53,6 +63,9 @@ interface CubeSceneProps {
   cameraSensitivity?: number;
   cameraZoomSpeed?: number;
   showVisuals?: boolean;
+  defaultCameraFace?: CameraFace;
+  cubeStyle?: CubeStyle;
+  reducedMotion?: boolean;
 }
 
 export default function CubeScene({
@@ -63,14 +76,20 @@ export default function CubeScene({
   onFrame,
   interactive = true,
   compact = false,
-  cameraMode = "competitive",
+  cameraMode = "free-orbit",
   cameraInvertVertical = false,
   cameraSensitivity = 1.0,
   cameraZoomSpeed = 1.0,
   showVisuals = false,
+  defaultCameraFace = "white",
+  cubeStyle = "classic",
+  reducedMotion = false,
 }: CubeSceneProps) {
   const background = theme === "dark" ? "#070b12" : "#eef2f7";
-  const cameraPosition: [number, number, number] = compact ? [4.8, 3.7, 5.2] : [5.6, 4.4, 6.2];
+  const facePos = FACE_POSITIONS[defaultCameraFace] ?? FACE_POSITIONS.white;
+  const cameraPosition: [number, number, number] = compact
+    ? [4.8, 3.7, 5.2]
+    : [facePos[0] * 0.65, facePos[1] * 0.65, facePos[2] * 0.65];
   const cameraFov = compact ? 42 : 38;
 
   const [targetPreset, setTargetPreset] = useState<string | null>(null);
@@ -130,7 +149,7 @@ export default function CubeScene({
         />
         <directionalLight position={[-5, 2, -3]} intensity={0.8} color="#8ec5ff" />
         <CubeAnimator onFrame={onFrame} tickPlayerCube={cube === undefined} />
-        <CubeModel cube={cube} activeMove={activeMove} showVisuals={showVisuals} />
+        <CubeModel cube={cube} activeMove={activeMove} showVisuals={showVisuals} cubeStyle={cubeStyle} />
         <Environment preset="city" />
         <AdaptiveDpr pixelated />
         
@@ -142,6 +161,7 @@ export default function CubeScene({
           compact={compact}
           preset={targetPreset}
           onPresetDone={() => setTargetPreset(null)}
+          reducedMotion={reducedMotion}
         />
       </Canvas>
 
@@ -205,6 +225,7 @@ function CameraManager({
   compact,
   preset,
   onPresetDone,
+  reducedMotion = false,
 }: {
   cameraMode: "competitive" | "free-orbit";
   invertVertical: boolean;
@@ -213,6 +234,7 @@ function CameraManager({
   compact: boolean;
   preset: string | null;
   onPresetDone: () => void;
+  reducedMotion?: boolean;
 }) {
   const { camera } = useThree();
   const controlsRef = useRef<any>(null);
@@ -330,7 +352,7 @@ function CameraManager({
       ref={controlsRef}
       makeDefault
       enabled={cameraMode === "free-orbit" && !(transitionRef.current?.active)}
-      enableDamping
+      enableDamping={!reducedMotion}
       dampingFactor={0.08}
       minDistance={1.8}
       maxDistance={40.0}
@@ -361,14 +383,31 @@ function CubeAnimator({
   return null;
 }
 
+const CUBE_STYLE_PROPS: Record<CubeStyle, {
+  bodyColor: string;
+  bodyRoughness: number;
+  bodyMetalness: number;
+  bevelRadius: number;
+  stickerRoughness: number;
+  stickerMetalness: number;
+  stickerSize: number;
+}> = {
+  classic: { bodyColor: "#151923", bodyRoughness: 0.62, bodyMetalness: 0.1, bevelRadius: 0.045, stickerRoughness: 0.44, stickerMetalness: 0.04, stickerSize: 0.68 },
+  speedcube: { bodyColor: "#1a1f2e", bodyRoughness: 0.35, bodyMetalness: 0.15, bevelRadius: 0.025, stickerRoughness: 0.25, stickerMetalness: 0.08, stickerSize: 0.72 },
+  stickerless: { bodyColor: "#1e2433", bodyRoughness: 0.5, bodyMetalness: 0.05, bevelRadius: 0.035, stickerRoughness: 0.35, stickerMetalness: 0.02, stickerSize: 0.78 },
+  minimal: { bodyColor: "#11151f", bodyRoughness: 0.7, bodyMetalness: 0.0, bevelRadius: 0.015, stickerRoughness: 0.5, stickerMetalness: 0.0, stickerSize: 0.74 },
+};
+
 function CubeModel({
   cube,
   activeMove,
   showVisuals,
+  cubeStyle = "classic",
 }: {
   cube?: CubeState;
   activeMove?: SceneActiveMove | null;
   showVisuals: boolean;
+  cubeStyle?: CubeStyle;
 }) {
   const storeCube = useCubeStore((state) => state.cube);
   const storeActiveMove = useCubeStore((state) => state.activeMove);
@@ -377,6 +416,8 @@ function CubeModel({
   const renderCube = currentActiveMove?.startCube ?? currentCube;
   const progress = easeInOutCubic(currentActiveMove?.progress ?? 0);
   const angle = currentActiveMove ? currentActiveMove.move.quarterTurns * (Math.PI / 2) * progress : 0;
+
+  const styleProps = CUBE_STYLE_PROPS[cubeStyle];
 
   return (
     <group position={[0, 0.1, 0]} rotation={[-0.08, -0.18, 0.02]}>
@@ -404,6 +445,7 @@ function CubeModel({
             quaternion={quaternion}
             isMoving={moving}
             showVisuals={showVisuals}
+            styleProps={styleProps}
           />
         );
       })}
@@ -470,6 +512,9 @@ interface CubieProps {
   cubie: CubieType;
   position: [number, number, number];
   quaternion: THREE.Quaternion;
+  isMoving: boolean;
+  showVisuals: boolean;
+  styleProps: typeof CUBE_STYLE_PROPS.classic;
 }
 
 function Cubie({
@@ -478,15 +523,20 @@ function Cubie({
   quaternion,
   isMoving,
   showVisuals,
-}: CubieProps & { isMoving: boolean; showVisuals: boolean }) {
+  styleProps,
+}: CubieProps) {
   return (
     <group position={position} quaternion={quaternion}>
       <RoundedBox
         args={[CUBIE_SIZE, CUBIE_SIZE, CUBIE_SIZE]}
-        radius={0.045}
+        radius={styleProps.bevelRadius}
         smoothness={5}
       >
-        <meshStandardMaterial color="#151923" roughness={0.62} metalness={0.1} />
+        <meshStandardMaterial
+          color={styleProps.bodyColor}
+          roughness={styleProps.bodyRoughness}
+          metalness={styleProps.bodyMetalness}
+        />
       </RoundedBox>
 
       {cubie.stickers.map((sticker) => (
@@ -495,6 +545,9 @@ function Cubie({
           sticker={sticker}
           isMoving={isMoving}
           showVisuals={showVisuals}
+          stickerSize={styleProps.stickerSize}
+          stickerRoughness={styleProps.stickerRoughness}
+          stickerMetalness={styleProps.stickerMetalness}
         />
       ))}
     </group>
@@ -505,12 +558,21 @@ function StickerPanel({
   sticker,
   isMoving,
   showVisuals,
+  stickerSize = 0.68,
+  stickerRoughness = 0.44,
+  stickerMetalness = 0.04,
 }: {
   sticker: Sticker;
   isMoving: boolean;
   showVisuals: boolean;
+  stickerSize?: number;
+  stickerRoughness?: number;
+  stickerMetalness?: number;
 }) {
-  const { position, size } = useMemo(() => getStickerTransform(sticker.normal), [sticker.normal]);
+  const { position, size } = useMemo(
+    () => getStickerTransform(sticker.normal, stickerSize),
+    [sticker.normal, stickerSize],
+  );
   const emissiveIntensity = showVisuals && isMoving ? 0.38 : 0.025;
   const colorOffset = showVisuals && isMoving ? "#ffffff" : sticker.color;
 
@@ -519,8 +581,8 @@ function StickerPanel({
       <boxGeometry args={size} />
       <meshStandardMaterial
         color={sticker.color}
-        roughness={0.44}
-        metalness={0.04}
+        roughness={stickerRoughness}
+        metalness={stickerMetalness}
         emissive={colorOffset}
         emissiveIntensity={emissiveIntensity}
       />
@@ -528,27 +590,27 @@ function StickerPanel({
   );
 }
 
-function getStickerTransform(normal: Vec3): {
+function getStickerTransform(normal: Vec3, stickerSize = STICKER_SIZE): {
   position: [number, number, number];
   size: [number, number, number];
 } {
   if (normal[0] !== 0) {
     return {
       position: [normal[0] * STICKER_OFFSET, 0, 0],
-      size: [STICKER_DEPTH, STICKER_SIZE, STICKER_SIZE],
+      size: [STICKER_DEPTH, stickerSize, stickerSize],
     };
   }
 
   if (normal[1] !== 0) {
     return {
       position: [0, normal[1] * STICKER_OFFSET, 0],
-      size: [STICKER_SIZE, STICKER_DEPTH, STICKER_SIZE],
+      size: [stickerSize, STICKER_DEPTH, stickerSize],
     };
   }
 
   return {
     position: [0, 0, normal[2] * STICKER_OFFSET],
-    size: [STICKER_SIZE, STICKER_SIZE, STICKER_DEPTH],
+    size: [stickerSize, stickerSize, STICKER_DEPTH],
   };
 }
 

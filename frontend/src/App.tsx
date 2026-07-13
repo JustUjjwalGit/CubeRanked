@@ -847,6 +847,9 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
     document.documentElement.dataset.theme = settings.theme;
+    document.documentElement.dataset.cubeStyle = settings.cubeStyle;
+    document.documentElement.dataset.reducedMotion = settings.reducedMotion ? "true" : "false";
+    document.documentElement.style.setProperty("--ui-scale", String(settings.uiScale));
     audioManager.setMasterVolume(settings.audio.masterVolume);
     audioManager.setSfxVolume(settings.audio.sfxVolume);
     audioManager.setUiVolume(settings.audio.uiVolume);

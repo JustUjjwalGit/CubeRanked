@@ -11,9 +11,7 @@ export interface SolveRecord {
   createdAt: string;
 }
 
-export type AccentColor = "indigo" | "cyan" | "violet" | "emerald";
-export type CubeStyle = "classic" | "competition" | "minimal" | "rounded";
-export type StartupPage = "home" | "profile" | "play";
+export type CubeStyle = "classic" | "speedcube" | "stickerless" | "minimal";
 export type CameraFace = "white" | "yellow" | "green" | "blue" | "red" | "orange";
 
 export interface AudioSettings {
@@ -36,12 +34,9 @@ export interface SessionSettings {
   cameraInvertVertical: boolean;
   cameraSensitivity: number;
   cameraZoomSpeed: number;
-  startupPage: StartupPage;
   defaultCameraFace: CameraFace;
   uiScale: number;
-  compactMode: boolean;
   reducedMotion: boolean;
-  accentColor: AccentColor;
   cubeStyle: CubeStyle;
   audio: AudioSettings;
 }
@@ -79,16 +74,13 @@ export const DEFAULT_SETTINGS: SessionSettings = {
     L: "L",
     B: "B",
   },
-  cameraMode: "competitive",
+  cameraMode: "free-orbit",
   cameraInvertVertical: false,
   cameraSensitivity: 1.0,
   cameraZoomSpeed: 1.0,
-  startupPage: "home",
   defaultCameraFace: "white",
   uiScale: 1.0,
-  compactMode: false,
   reducedMotion: false,
-  accentColor: "indigo",
   cubeStyle: "classic",
   audio: { ...DEFAULT_AUDIO },
 };
