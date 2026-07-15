@@ -48,7 +48,7 @@ import {
   type BotOpponent,
   type RaceOpponentSnapshot,
 } from "./utils/botRace";
-import { makeMove, MOVE_FACES, parseMove, type Face } from "./utils/cubeEngine";
+import { getRelativeFace, makeMove, MOVE_FACES, parseMove, type Face } from "./utils/cubeEngine";
 import { generateWcaScramble, scrambleToString, type Penalty } from "./utils/scramble";
 import {
   createSolveRecord,
@@ -371,6 +371,8 @@ export default function App() {
   const setTurnMode = useCubeStore((state) => state.setTurnMode);
   const turnDuration = useCubeStore((state) => state.turnDuration);
   const setTurnDuration = useCubeStore((state) => state.setTurnDuration);
+  const currentViewFace = useCubeStore((state) => state.currentViewFace);
+  const setViewFace = useCubeStore((state) => state.setViewFace);
 
   const stage = gameState.stage;
   const overlay = gameState.overlay;
@@ -417,9 +419,9 @@ export default function App() {
           !Array.isArray(currentVal) &&
           !Array.isArray(nextVal)
         ) {
-          merged[key] = { ...currentVal, ...nextVal };
+          (merged as any)[key] = { ...currentVal, ...nextVal };
         } else if (nextVal !== undefined) {
-          merged[key] = nextVal;
+          (merged as any)[key] = nextVal;
         }
       }
       return merged;
@@ -1032,7 +1034,6 @@ export default function App() {
       serverClockOffsetRef.current = Date.now() - payload.serverNow;
       dispatch({ type: "START_COUNTDOWN" });
       setCountdownValue("3");
-      audioManager.playCountdownBeep();
 
       let lastPlayedValue = "3";
       const countdownEndAt = payload.countdownAt + payload.countdownMs;
@@ -1048,7 +1049,6 @@ export default function App() {
           lastPlayedValue = newVal;
           setCountdownValue(newVal);
           if (newVal === "GO") audioManager.playGo();
-          else audioManager.playCountdownBeep(newVal === "1");
         }
       };
 
@@ -1323,20 +1323,17 @@ export default function App() {
     } : current);
 
     const timeouts = [
-      window.setTimeout(() => { setCountdownValue("2"); audioManager.playCountdownBeep(); }, 850),
-      window.setTimeout(() => { setCountdownValue("1"); audioManager.playCountdownBeep(true); }, 1_700),
-      window.setTimeout(() => { setCountdownValue("GO"); audioManager.playGo(); }, 2_550),
+      window.setTimeout(() => { setCountdownValue("2"); }, 600),
+      window.setTimeout(() => { setCountdownValue("1"); }, 1_200),
+      window.setTimeout(() => { setCountdownValue("GO"); audioManager.playGo(); }, 1_600),
       window.setTimeout(() => {
         const now = performance.now();
         solveStartRef.current = now;
         setElapsedMs(0);
         setBotOpponent((current) => current ? { ...current, status: "solving" } : current);
         dispatch({ type: "COUNTDOWN_COMPLETE" });
-      }, 3_050),
+      }, 2_000),
     ];
-
-    // Play first beep immediately
-    audioManager.playCountdownBeep();
 
     return () => {
       timeouts.forEach((timeout) => window.clearTimeout(timeout));
@@ -1574,7 +1571,17 @@ export default function App() {
 
       if (face && MOVE_FACES.includes(face)) {
         event.preventDefault();
-        playFace(face, event.shiftKey ? inverseTurnMode(turnMode) : turnMode);
+        const actualFace = getRelativeFace(currentViewFace, face);
+        playFace(actualFace, event.shiftKey ? inverseTurnMode(turnMode) : turnMode);
+        return;
+      }
+
+      const numberKey = event.key;
+      if (numberKey >= "1" && numberKey <= "6") {
+        event.preventDefault();
+        const faceMap: Record<string, Face> = { "1": "F", "2": "L", "3": "R", "4": "B", "5": "U", "6": "D" };
+        setViewFace(faceMap[numberKey]);
+        return;
       }
     };
 
@@ -1583,11 +1590,13 @@ export default function App() {
   }, [
     beginInspection,
     cancelRankedQueue,
+    currentViewFace,
     overlay,
     playFace,
     redoPracticeMove,
     requestNewScramble,
     settings.hudVisible,
+    setViewFace,
     stage,
     turnMode,
     undoPracticeMove,
@@ -1638,9 +1647,6 @@ export default function App() {
               key="learn"
               onBack={returnHome}
               theme={settings.theme}
-              cameraSensitivity={settings.cameraSensitivity}
-              cameraZoomSpeed={settings.cameraZoomSpeed}
-              cameraInvertVertical={settings.cameraInvertVertical}
             />
           ) : stage === "MATCHMAKING" ? (
             <QueueScreen

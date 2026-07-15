@@ -303,7 +303,7 @@ function OverviewTab({ user, rankInfo, rankProgress, inPlacement, ratingVal, win
         <StatCard label="Games" value={String(user.gamesPlayed)} sub={`${user.wins}W ${user.losses}L`} />
         <StatCard label="Win Rate" value={`${winRate}%`} color={winRate >= 50 ? "#34d399" : "#f87171"} />
         <StatCard label="Best Time" value={stats.pbMs ? formatTime(stats.pbMs) : "-"} />
-        <StatCard label="Avg TPS" value={stats.avgTps} sub={`Max: ${stats.fastestTps}`} color="#10b981" />
+        <StatCard label="Avg TPS" value={stats.avgTps.toFixed(2)} sub={`Max: ${stats.fastestTps.toFixed(2)}`} color="#10b981" />
         <StatCard label="Bot Race" value={String(user.botWins + user.botLosses)} sub={`${user.botWins}W ${user.botLosses}L`} />
         <StatCard label="Streak" value={user.streak ? `🔥 ${user.streak}` : "-"} color={user.streak && user.streak > 0 ? "#fbbf24" : undefined} />
       </div>
@@ -349,11 +349,11 @@ function StatisticsTab({ user, stats, inPlacement }: {
         <DetailedStatCard icon={<TrendingUp size={16} />} label="Win Rate" value={`${winRate}%`} color={winRate >= 50 ? "#34d399" : "#f87171"} />
         <DetailedStatCard icon={<Activity size={16} />} label="Win Streak" value={user.streak ? String(user.streak) : "0"} color={user.streak && user.streak > 0 ? "#fbbf24" : undefined} />
         <DetailedStatCard icon={<Clock size={16} />} label="Best Time" value={stats.pbMs ? formatTime(stats.pbMs) : "-"} />
-        <DetailedStatCard icon={<Clock size={16} />} label="Avg Time" value={stats.avgMs ? formatTime(stats.avgMs) : "-"} />
+        <DetailedStatCard icon={<Clock size={16} />} label="Avg Time" value={stats.ao12Ms ? formatTime(stats.ao12Ms) : "-"} />
         <DetailedStatCard icon={<Gamepad2 size={16} />} label="Bot Matches" value={String(user.botWins + user.botLosses)} sub={`${user.botWins}W · ${user.botLosses}L`} />
         <DetailedStatCard icon={<Gamepad2 size={16} />} label="Bot Win Rate" value={`${botWinRate}%`} color={botWinRate >= 50 ? "#34d399" : "#f87171"} />
-        <DetailedStatCard icon={<BarChart3 size={16} />} label="Avg TPS" value={stats.avgTps} sub={`Best: ${stats.fastestTps}`} />
-        <DetailedStatCard icon={<Medal size={16} />} label="Total Solves" value={String(stats.totalSolves)} />
+        <DetailedStatCard icon={<BarChart3 size={16} />} label="Avg TPS" value={stats.avgTps.toFixed(2)} sub={`Best: ${stats.fastestTps.toFixed(2)}`} />
+        <DetailedStatCard icon={<Medal size={16} />} label="Total Solves" value={String(stats.totalPlays)} />
       </div>
 
       {/* Season Info */}

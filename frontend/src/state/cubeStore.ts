@@ -21,6 +21,11 @@ export interface ActiveMove {
   progress: number;
 }
 
+export interface ViewFaceTarget {
+  face: Face;
+  version: number;
+}
+
 interface CubeStore {
   cube: CubeState;
   activeMove: ActiveMove | null;
@@ -29,6 +34,8 @@ interface CubeStore {
   redoStack: Move[];
   turnMode: TurnMode;
   turnDuration: number;
+  currentViewFace: Face;
+  viewFaceTarget: ViewFaceTarget;
   enqueueMove: (move: Move) => void;
   enqueuePracticeMove: (move: Move) => void;
   playFace: (face: Face) => void;
@@ -43,6 +50,8 @@ interface CubeStore {
   isSolved: () => boolean;
   setTurnMode: (mode: TurnMode) => void;
   setTurnDuration: (duration: number) => void;
+  setViewFace: (face: Face) => void;
+  setCurrentViewFace: (face: Face) => void;
 }
 
 export const useCubeStore = create<CubeStore>((set, get) => ({
@@ -53,6 +62,8 @@ export const useCubeStore = create<CubeStore>((set, get) => ({
   redoStack: [],
   turnMode: "normal",
   turnDuration: 0.24,
+  currentViewFace: "F",
+  viewFaceTarget: { face: "F", version: 0 },
 
   enqueueMove: (move) => {
     set((state) => {
@@ -224,5 +235,17 @@ export const useCubeStore = create<CubeStore>((set, get) => ({
 
   setTurnDuration: (duration) => {
     set({ turnDuration: duration });
+  },
+
+  setViewFace: (face) => {
+    const current = get().viewFaceTarget;
+    set({
+      viewFaceTarget: { face, version: current.version + 1 },
+      currentViewFace: face,
+    });
+  },
+
+  setCurrentViewFace: (face) => {
+    set({ currentViewFace: face });
   },
 }));

@@ -221,23 +221,23 @@ export default function AppSettingsDialog({
                   <div className="settings-chip-group">
                     <button
                       type="button"
-                      className={`settings-chip ${settings.cameraMode === "free-orbit" ? "active" : ""}`}
-                      onClick={() => onSettings({ cameraMode: "free-orbit" })}
+                      className={`settings-chip ${settings.cameraMode === "free-rotation" ? "active" : ""}`}
+                      onClick={() => onSettings({ cameraMode: "free-rotation" })}
                     >
-                      Free Orbit
+                      Free Rotation
                     </button>
                     <button
                       type="button"
                       className={`settings-chip ${settings.cameraMode === "competitive" ? "active" : ""}`}
                       onClick={() => onSettings({ cameraMode: "competitive" })}
                     >
-                      Fixed Competitive
+                      Competitive
                     </button>
                   </div>
                   <p className="settings-hint">
                     {settings.cameraMode === "competitive"
-                      ? "Fixed, optimized view angle for standard plays."
-                      : "Unrestricted rotation and zoom from any angle."}
+                      ? "Fixed camera. Use face buttons or number keys to switch views."
+                      : "Drag to rotate the cube freely. Face buttons snap to canonical orientation."}
                   </p>
                 </div>
 
@@ -386,7 +386,7 @@ export default function AppSettingsDialog({
                     <span>Music Volume ({Math.round(settings.audio.musicVolume * 100)}%)</span>
                     <input type="range" min="0" max="1" step="0.05" value={settings.audio.musicVolume} onChange={(e) => setAudio({ musicVolume: Number(e.target.value) })} />
                   </label>
-                  <p className="settings-hint">Background music is not yet implemented.</p>
+                  <p className="settings-hint">Controls the volume of the background music track.</p>
                 </div>
               </div>
             )}

@@ -1,21 +1,29 @@
 import { motion } from "framer-motion";
 import { Keyboard } from "lucide-react";
+import { getRelativeFace, type Face } from "../utils/cubeEngine";
+import { useCubeStore } from "../state/cubeStore";
 import { DEFAULT_SETTINGS, type SessionSettings } from "../utils/sessionStats";
+
+const FACE_NAMES: Record<Face, string> = {
+  U: "White", D: "Yellow", R: "Red", L: "Orange", F: "Green", B: "Blue",
+};
 
 export default function KeyboardCheatSheet({ settings }: { settings: SessionSettings }) {
   const bindings = settings.keybindings || DEFAULT_SETTINGS.keybindings;
+  const currentViewFace = useCubeStore((state) => state.currentViewFace);
 
-  const moveRows: Array<{ key: string; shift?: string; label: string }> = [
-    { key: bindings.R || "R", shift: `Shift+${bindings.R || "R"}`, label: "Right" },
-    { key: bindings.L || "L", shift: `Shift+${bindings.L || "L"}`, label: "Left" },
-    { key: bindings.U || "U", shift: `Shift+${bindings.U || "U"}`, label: "Up" },
-    { key: bindings.D || "D", shift: `Shift+${bindings.D || "D"}`, label: "Down" },
-    { key: bindings.F || "F", shift: `Shift+${bindings.F || "F"}`, label: "Front" },
-    { key: bindings.B || "B", shift: `Shift+${bindings.B || "B"}`, label: "Back" },
+  const moveRows: Array<{ key: string; shift?: string; label: string; face: Face }> = [
+    { key: bindings.R || "R", shift: `Shift+${bindings.R || "R"}`, label: "Right", face: "R" },
+    { key: bindings.L || "L", shift: `Shift+${bindings.L || "L"}`, label: "Left", face: "L" },
+    { key: bindings.U || "U", shift: `Shift+${bindings.U || "U"}`, label: "Up", face: "U" },
+    { key: bindings.D || "D", shift: `Shift+${bindings.D || "D"}`, label: "Down", face: "D" },
+    { key: bindings.F || "F", shift: `Shift+${bindings.F || "F"}`, label: "Front", face: "F" },
+    { key: bindings.B || "B", shift: `Shift+${bindings.B || "B"}`, label: "Back", face: "B" },
   ];
 
   const cameraRows = [
-    { key: "Mouse Drag", label: "Rotate View" },
+    { key: "1-6", label: "View Face" },
+    { key: "Mouse Drag", label: "Orbit" },
     { key: "Scroll", label: "Zoom" },
   ];
 
@@ -39,15 +47,19 @@ export default function KeyboardCheatSheet({ settings }: { settings: SessionSett
 
       <div className="kbd-section">
         <div className="kbd-section-label">Moves</div>
-        {moveRows.map((row) => (
-          <div key={row.key} className="kbd-row">
-            <div className="kbd-keys">
-              <kbd className="kbd-key">{row.key}</kbd>
-              {row.shift && <kbd className="kbd-key modifier">{row.shift}</kbd>}
+        {moveRows.map((row) => {
+          const actualFace = getRelativeFace(currentViewFace, row.face);
+          const faceName = FACE_NAMES[actualFace];
+          return (
+            <div key={row.key} className="kbd-row">
+              <div className="kbd-keys">
+                <kbd className="kbd-key">{row.key}</kbd>
+                {row.shift && <kbd className="kbd-key modifier">{row.shift}</kbd>}
+              </div>
+              <span className="kbd-label">{row.label} <span className="kbd-face-name">{faceName}</span></span>
             </div>
-            <span className="kbd-label">{row.label}</span>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="kbd-section">

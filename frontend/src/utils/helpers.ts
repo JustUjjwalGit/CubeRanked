@@ -1,9 +1,9 @@
-import { calculateStats, type SolveRecord } from "./sessionStats";
+import { calculateStats, type SolveRecord, type Penalty } from "./sessionStats";
 import type {
   MatchPlayerSnapshot,
   SocketConnectionState,
-  RaceOpponentSnapshot,
 } from "../network/socketTypes";
+import type { RaceOpponentSnapshot } from "./botRace";
 import type { TurnMode } from "../state/cubeStore";
 import type { GameStage } from "../state/gameStateMachine";
 
@@ -19,7 +19,7 @@ interface RaceResult {
   botMoveCount: number;
   youTps: number;
   botTps: number;
-  penalty: import("./sessionStats").Penalty;
+  penalty: Penalty;
   winner: "you" | "bot";
   timeDifferenceMs: number | null;
   botName: string;

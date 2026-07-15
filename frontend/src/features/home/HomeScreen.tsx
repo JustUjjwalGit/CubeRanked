@@ -13,7 +13,8 @@ import {
 import AppBackground from "../../components/AppBackground";
 import SocialSidebar from "../profile/SocialSidebar";
 import { connectionLabel } from "../../utils/helpers";
-import type { SocketConnectionState, SocketDebugSnapshot, UserProfile } from "../../network/socketTypes";
+import type { SocketConnectionState, SocketDebugSnapshot } from "../../network/socketTypes";
+import type { UserProfile } from "../../api/auth";
 
 const VERSION = "v0.3.0";
 

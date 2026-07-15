@@ -1,11 +1,77 @@
 import { motion } from "framer-motion";
-import { User } from "lucide-react";
+import { User, Trophy, Zap, Globe, GraduationCap } from "lucide-react";
 import AppBackground from "../../components/AppBackground";
 
 interface IdentityScreenProps {
   onGuest: () => void;
   onGoogle: () => void;
 }
+
+function AnimatedCube() {
+  const faceSize = 18;
+  const gap = 1.5;
+  const cubeSize = faceSize * 3 + gap * 2;
+
+  return (
+    <div className="identity-cube-scene">
+      <motion.div
+        className="identity-cube"
+        animate={{ rotateX: [20, 380], rotateY: [0, 360] }}
+        transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
+        style={{
+          width: cubeSize,
+          height: cubeSize,
+          position: "relative",
+          transformStyle: "preserve-3d",
+        }}
+      >
+        {[
+          { color: "#22c55e", transform: `translateZ(${cubeSize / 2}px)` },
+          { color: "#3b82f6", transform: `rotateY(180deg) translateZ(${cubeSize / 2}px)` },
+          { color: "#ef4444", transform: `rotateY(90deg) translateZ(${cubeSize / 2}px)` },
+          { color: "#f97316", transform: `rotateY(-90deg) translateZ(${cubeSize / 2}px)` },
+          { color: "#f8fafc", transform: `rotateX(90deg) translateZ(${cubeSize / 2}px)` },
+          { color: "#facc15", transform: `rotateX(-90deg) translateZ(${cubeSize / 2}px)` },
+        ].map((face, i) => (
+          <div
+            key={i}
+            style={{
+              position: "absolute",
+              width: cubeSize,
+              height: cubeSize,
+              transform: face.transform,
+              display: "grid",
+              gridTemplateColumns: `repeat(3, ${faceSize}px)`,
+              gridTemplateRows: `repeat(3, ${faceSize}px)`,
+              gap,
+              backfaceVisibility: "hidden",
+            }}
+          >
+            {Array.from({ length: 9 }).map((_, j) => (
+              <div
+                key={j}
+                style={{
+                  width: faceSize,
+                  height: faceSize,
+                  borderRadius: 2.5,
+                  background: face.color,
+                  opacity: 0.82 + (j % 3) * 0.06,
+                }}
+              />
+            ))}
+          </div>
+        ))}
+      </motion.div>
+    </div>
+  );
+}
+
+const FEATURES = [
+  { icon: Zap, label: "Bot Race", desc: "Race against AI opponents of varying difficulty" },
+  { icon: Trophy, label: "Ranked", desc: "Compete in 1v1 matches and climb the leaderboard" },
+  { icon: Globe, label: "Private Rooms", desc: "Create rooms and invite friends to compete" },
+  { icon: GraduationCap, label: "Learn Mode", desc: "Master algorithms with interactive tutorials" },
+];
 
 export default function IdentityScreen({ onGuest, onGoogle }: IdentityScreenProps) {
   return (
@@ -18,15 +84,51 @@ export default function IdentityScreen({ onGuest, onGoogle }: IdentityScreenProp
     >
       <AppBackground />
 
-      <img
-        className="identity-logo"
-        src="/logos/CubeRankedLogosFull.png"
-        alt="CubeRanked"
-      />
+      <AnimatedCube />
 
-      <p className="identity-tagline">The competitive speedcubing platform</p>
+      <motion.div
+        className="identity-hero"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.15, duration: 0.4 }}
+      >
+        <img
+          className="identity-logo"
+          src="/logos/CubeRankedLogosFull.png"
+          alt="CubeRanked"
+        />
+        <p className="identity-tagline">The competitive speedcubing platform</p>
+      </motion.div>
 
-      <div className="identity-cards">
+      <motion.div
+        className="identity-features"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.25, duration: 0.4 }}
+      >
+        {FEATURES.map(({ icon: Icon, label, desc }, i) => (
+          <motion.div
+            key={label}
+            className="identity-feature"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.3 + i * 0.07, duration: 0.3 }}
+          >
+            <Icon size={16} className="identity-feature-icon" />
+            <div>
+              <strong>{label}</strong>
+              <span>{desc}</span>
+            </div>
+          </motion.div>
+        ))}
+      </motion.div>
+
+      <motion.div
+        className="identity-cards"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.5, duration: 0.4 }}
+      >
         <button type="button" className="identity-card primary" onClick={onGuest}>
           <div className="identity-card-icon">
             <User size={22} />
@@ -48,10 +150,10 @@ export default function IdentityScreen({ onGuest, onGoogle }: IdentityScreenProp
           </div>
           <div className="identity-card-text">
             <strong>Continue with Google</strong>
-            <span>Sign in with your Google account.</span>
+            <span>Sign in to save progress and play Ranked.</span>
           </div>
         </button>
-      </div>
+      </motion.div>
 
       <p className="identity-footer-note">
         Guest mode includes Practice, Bot Race, and Private Rooms.

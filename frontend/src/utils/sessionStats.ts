@@ -1,4 +1,5 @@
 import type { Penalty } from "./scramble";
+import type { Face } from "./cubeEngine";
 
 export interface SolveRecord {
   id: string;
@@ -13,6 +14,8 @@ export interface SolveRecord {
 
 export type CubeStyle = "classic" | "speedcube" | "stickerless" | "minimal";
 export type CameraFace = "white" | "yellow" | "green" | "blue" | "red" | "orange";
+export type { Penalty } from "./scramble";
+export type { Face } from "./cubeEngine";
 
 export interface AudioSettings {
   masterVolume: number;
@@ -30,7 +33,7 @@ export interface SessionSettings {
   showFpsCounter: boolean;
   showKeyboardCheatSheet: boolean;
   keybindings: Record<string, string>;
-  cameraMode: "competitive" | "free-orbit";
+  cameraMode: "competitive" | "free-rotation";
   cameraInvertVertical: boolean;
   cameraSensitivity: number;
   cameraZoomSpeed: number;
@@ -74,7 +77,7 @@ export const DEFAULT_SETTINGS: SessionSettings = {
     L: "L",
     B: "B",
   },
-  cameraMode: "free-orbit",
+  cameraMode: "free-rotation",
   cameraInvertVertical: false,
   cameraSensitivity: 1.0,
   cameraZoomSpeed: 1.0,

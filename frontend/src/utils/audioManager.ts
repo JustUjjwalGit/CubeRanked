@@ -399,7 +399,7 @@ export const audioManager = {
 
   playNotification() {
     playNotifTone(880, 0.12, 0.1);
-    playNotifTone(1100, 0.1, 0.08, 0.1);
+    playNotifTone(1100, 0.08, 0.1);
   },
 
   playQueuePop() {

@@ -44,6 +44,19 @@ const FACE_NORMALS: Record<Face, Vec3> = {
   B: [0, 0, -1],
 };
 
+const VIEW_RELATIVE_MAP: Record<Face, Record<Face, Face>> = {
+  F: { F: "F", R: "R", U: "U", B: "B", L: "L", D: "D" },
+  L: { F: "L", R: "F", U: "U", B: "R", L: "B", D: "D" },
+  R: { F: "R", R: "B", U: "U", B: "L", L: "F", D: "D" },
+  B: { F: "B", R: "L", U: "U", B: "F", L: "R", D: "D" },
+  U: { F: "U", R: "R", U: "B", B: "D", L: "L", D: "F" },
+  D: { F: "D", R: "R", U: "F", B: "U", L: "L", D: "B" },
+};
+
+export function getRelativeFace(viewFace: Face, logicalFace: Face): Face {
+  return VIEW_RELATIVE_MAP[viewFace][logicalFace];
+}
+
 const FACE_TO_AXIS_LAYER: Record<Face, { axis: Axis; layer: -1 | 1 }> = {
   U: { axis: "y", layer: 1 },
   D: { axis: "y", layer: -1 },

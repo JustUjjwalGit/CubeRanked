@@ -2,10 +2,10 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import {
   AdaptiveDpr,
   Environment,
-  OrbitControls,
   RoundedBox,
+  OrbitControls,
 } from "@react-three/drei";
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useMemo, useEffect, useRef } from "react";
 import * as THREE from "three";
 import {
   axisToVector,
@@ -18,22 +18,14 @@ import {
   type Vec3,
 } from "../../utils/cubeEngine";
 import { useCubeStore } from "../../state/cubeStore";
-import type { CameraFace, CubeStyle } from "../../utils/sessionStats";
+import type { Face } from "../../utils/cubeEngine";
+import type { CubeStyle } from "../../utils/sessionStats";
 
 const CUBIE_SIZE = 0.92;
 const CUBIE_SPACING = 0.98;
 const STICKER_SIZE = 0.68;
 const STICKER_DEPTH = 0.032;
 const STICKER_OFFSET = CUBIE_SIZE / 2 + STICKER_DEPTH / 2 + 0.004;
-
-const FACE_POSITIONS: Record<CameraFace, [number, number, number]> = {
-  white: [0.001, 8.5, 0],
-  yellow: [0.001, -8.5, 0],
-  green: [8.5, 0, 0],
-  blue: [-8.5, 0, 0],
-  red: [0, 0, 8.5],
-  orange: [0, 0, -8.5],
-};
 
 const FACE_NORMALS: Record<string, Vec3> = {
   U: [0, 1, 0],
@@ -58,14 +50,55 @@ interface CubeSceneProps {
   onFrame?: (deltaSeconds: number) => void;
   interactive?: boolean;
   compact?: boolean;
-  cameraMode?: "competitive" | "free-orbit";
-  cameraInvertVertical?: boolean;
-  cameraSensitivity?: number;
-  cameraZoomSpeed?: number;
+  cameraMode?: "competitive" | "free-rotation";
   showVisuals?: boolean;
-  defaultCameraFace?: CameraFace;
   cubeStyle?: CubeStyle;
   reducedMotion?: boolean;
+}
+
+const FACE_CAMERA_POSITIONS: Record<Face, [number, number, number]> = {
+  F: [5.6, 4.4, 6.2],
+  R: [6.2, 4.4, -5.6],
+  L: [-6.2, 4.4, 5.6],
+  B: [-5.6, 4.4, -6.2],
+  U: [5.6, 6.2, -4.4],
+  D: [5.6, -6.2, 4.4],
+};
+
+const FACE_CAMERA_POSITIONS_COMPACT: Record<Face, [number, number, number]> = {
+  F: [4.8, 3.7, 5.2],
+  R: [5.2, 3.7, -4.8],
+  L: [-5.2, 3.7, 4.8],
+  B: [-4.8, 3.7, -5.2],
+  U: [4.8, 5.2, -3.7],
+  D: [4.8, -5.2, 3.7],
+};
+
+const FACE_NORMALS_ARRAY: Array<{ face: Face; normal: THREE.Vector3 }> = [
+  { face: "F", normal: new THREE.Vector3(0, 0, 1) },
+  { face: "B", normal: new THREE.Vector3(0, 0, -1) },
+  { face: "R", normal: new THREE.Vector3(1, 0, 0) },
+  { face: "L", normal: new THREE.Vector3(-1, 0, 0) },
+  { face: "U", normal: new THREE.Vector3(0, 1, 0) },
+  { face: "D", normal: new THREE.Vector3(0, -1, 0) },
+];
+
+function deriveFaceFromCameraPosition(
+  cameraPos: THREE.Vector3,
+): Face {
+  const dir = cameraPos.clone().normalize();
+  let bestFace: Face = "F";
+  let bestDot = -Infinity;
+
+  for (const { face, normal } of FACE_NORMALS_ARRAY) {
+    const dot = normal.dot(dir);
+    if (dot > bestDot) {
+      bestDot = dot;
+      bestFace = face;
+    }
+  }
+
+  return bestFace;
 }
 
 export default function CubeScene({
@@ -76,65 +109,33 @@ export default function CubeScene({
   onFrame,
   interactive = true,
   compact = false,
-  cameraMode = "free-orbit",
-  cameraInvertVertical = false,
-  cameraSensitivity = 1.0,
-  cameraZoomSpeed = 1.0,
+  cameraMode = "free-rotation",
   showVisuals = false,
-  defaultCameraFace = "white",
   cubeStyle = "classic",
   reducedMotion = false,
 }: CubeSceneProps) {
   const background = theme === "dark" ? "#070b12" : "#eef2f7";
-  const facePos = FACE_POSITIONS[defaultCameraFace] ?? FACE_POSITIONS.white;
+  const currentViewFace = useCubeStore((state) => state.currentViewFace);
+  const setViewFace = useCubeStore((state) => state.setViewFace);
   const cameraPosition: [number, number, number] = compact
     ? [4.8, 3.7, 5.2]
-    : [facePos[0] * 0.65, facePos[1] * 0.65, facePos[2] * 0.65];
+    : [5.6, 4.4, 6.2];
   const cameraFov = compact ? 42 : 38;
 
-  const [targetPreset, setTargetPreset] = useState<string | null>(null);
-
-  // Hotkey listener for camera presets
-  useEffect(() => {
-    if (compact || !interactive) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      // Ignore if typing in a text field
-      if (
-        document.activeElement?.tagName === "INPUT" ||
-        document.activeElement?.tagName === "TEXTAREA" ||
-        document.activeElement?.hasAttribute("contenteditable")
-      ) {
-        return;
-      }
-
-      const key = event.key;
-      const isAlt = event.altKey;
-
-      if (key === "1" || (isAlt && key === "1")) {
-        event.preventDefault();
-        setTargetPreset("front");
-      } else if (key === "2" || (isAlt && key === "2")) {
-        event.preventDefault();
-        setTargetPreset("top");
-      } else if (key === "3" || (isAlt && key === "3")) {
-        event.preventDefault();
-        setTargetPreset("right");
-      } else if (key === "4" || (isAlt && key === "4")) {
-        event.preventDefault();
-        setTargetPreset("isometric");
-      } else if (key === "5" || (isAlt && key === "5")) {
-        event.preventDefault();
-        setTargetPreset("reset");
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [compact, interactive]);
+  const viewButtons: Array<{ face: Face; color: string; label: string; key: string }> = [
+    { face: "F", color: "#22c55e", label: "Green", key: "1" },
+    { face: "L", color: "#f97316", label: "Orange", key: "2" },
+    { face: "R", color: "#ef4444", label: "Red", key: "3" },
+    { face: "B", color: "#3b82f6", label: "Blue", key: "4" },
+    { face: "U", color: "#f8fafc", label: "White", key: "5" },
+    { face: "D", color: "#facc15", label: "Yellow", key: "6" },
+  ];
 
   return (
-    <div className={`cube-stage ${compact ? "cube-stage-compact" : ""} ${className}`} aria-label="Interactive 3D Rubik's Cube">
+    <div
+      className={`cube-stage ${compact ? "cube-stage-compact" : ""} ${className} ${cameraMode === "free-rotation" ? "cube-draggable" : ""}`}
+      aria-label="Interactive 3D Rubik's Cube"
+    >
       <Canvas
         dpr={[1, 2]}
         gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
@@ -150,67 +151,32 @@ export default function CubeScene({
         <directionalLight position={[-5, 2, -3]} intensity={0.8} color="#8ec5ff" />
         <CubeAnimator onFrame={onFrame} tickPlayerCube={cube === undefined} />
         <CubeModel cube={cube} activeMove={activeMove} showVisuals={showVisuals} cubeStyle={cubeStyle} />
+        <CameraManager
+          compact={compact}
+          interactive={interactive}
+          cameraMode={cameraMode}
+        />
         <Environment preset="city" />
         <AdaptiveDpr pixelated />
-        
-        <CameraManager
-          cameraMode={cameraMode}
-          invertVertical={cameraInvertVertical}
-          mouseSensitivity={cameraSensitivity}
-          zoomSpeed={cameraZoomSpeed}
-          compact={compact}
-          preset={targetPreset}
-          onPresetDone={() => setTargetPreset(null)}
-          reducedMotion={reducedMotion}
-        />
       </Canvas>
 
-      {/* Floating camera preset buttons (only show if interactive and not compact) */}
+      {/* View selector buttons at bottom center */}
       {interactive && !compact && (
-        <div className="camera-presets-panel">
-          <div className="camera-presets-header">Camera</div>
-          <div className="camera-presets-row">
+        <div className="view-selector">
+          {viewButtons.map(({ face, color, label, key }) => (
             <button
+              key={face}
               type="button"
-              className="camera-preset-btn"
-              onClick={() => setTargetPreset("front")}
-              title="Front View (Hotkey: 1)"
+              className={`view-selector-btn ${currentViewFace === face ? "active" : ""}`}
+              style={{ "--face-color": color } as React.CSSProperties}
+              onClick={() => setViewFace(face)}
+              title={`${label} (${key})`}
             >
-              Front
+              <span className="view-selector-key">{key}</span>
+              <span className="view-selector-swatch" />
+              <span className="view-selector-label">{label}</span>
             </button>
-            <button
-              type="button"
-              className="camera-preset-btn"
-              onClick={() => setTargetPreset("top")}
-              title="Top View (Hotkey: 2)"
-            >
-              Top
-            </button>
-            <button
-              type="button"
-              className="camera-preset-btn"
-              onClick={() => setTargetPreset("right")}
-              title="Right View (Hotkey: 3)"
-            >
-              Right
-            </button>
-            <button
-              type="button"
-              className="camera-preset-btn"
-              onClick={() => setTargetPreset("isometric")}
-              title="Isometric View (Hotkey: 4)"
-            >
-              Iso
-            </button>
-            <button
-              type="button"
-              className="camera-preset-btn reset"
-              onClick={() => setTargetPreset("reset")}
-              title="Reset View (Hotkey: 5)"
-            >
-              Reset
-            </button>
-          </div>
+          ))}
         </div>
       )}
     </div>
@@ -218,145 +184,51 @@ export default function CubeScene({
 }
 
 function CameraManager({
-  cameraMode,
-  invertVertical,
-  mouseSensitivity,
-  zoomSpeed,
   compact,
-  preset,
-  onPresetDone,
-  reducedMotion = false,
+  interactive,
+  cameraMode,
 }: {
-  cameraMode: "competitive" | "free-orbit";
-  invertVertical: boolean;
-  mouseSensitivity: number;
-  zoomSpeed: number;
   compact: boolean;
-  preset: string | null;
-  onPresetDone: () => void;
-  reducedMotion?: boolean;
+  interactive: boolean;
+  cameraMode: "competitive" | "free-rotation";
 }) {
-  const { camera } = useThree();
   const controlsRef = useRef<any>(null);
-  
-  // Track animation targets
-  const transitionRef = useRef<{
-    active: boolean;
-    startPos: THREE.Vector3;
-    endPos: THREE.Vector3;
-    startTarget: THREE.Vector3;
-    endTarget: THREE.Vector3;
-    progress: number;
-  } | null>(null);
+  const { camera } = useThree();
+  const viewFaceTarget = useCubeStore((state) => state.viewFaceTarget);
+  const setCurrentViewFace = useCubeStore((state) => state.setCurrentViewFace);
+  const lastVersion = useRef(viewFaceTarget.version);
 
-  // Apply camera settings dynamically
   useEffect(() => {
-    const activeControls = controlsRef.current;
-    if (!activeControls) return;
+    if (viewFaceTarget.version === lastVersion.current) return;
+    lastVersion.current = viewFaceTarget.version;
 
-    activeControls.zoomSpeed = zoomSpeed * 1.0;
-    activeControls.rotateSpeed = mouseSensitivity * 0.7;
+    const positions = compact ? FACE_CAMERA_POSITIONS_COMPACT : FACE_CAMERA_POSITIONS;
+    const pos = positions[viewFaceTarget.face];
 
-    // Override rotateUp to support vertical inversion
-    activeControls.rotateUp = function (angle: number) {
-      const sign = invertVertical ? 1 : -1;
-      this.sphericalDelta.phi += angle * sign;
-    };
-  }, [invertVertical, mouseSensitivity, zoomSpeed]);
-
-  // Handle preset transitions
-  useEffect(() => {
-    if (!preset) return;
-
-    let targetPos: [number, number, number] = compact ? [4.8, 3.7, 5.2] : [5.6, 4.4, 6.2];
-
-    if (preset === "front") {
-      targetPos = [0, 0, 8.5];
-    } else if (preset === "top") {
-      targetPos = [0.001, 8.5, 0]; // slight offset to prevent gimbal lock
-    } else if (preset === "right") {
-      targetPos = [8.5, 0, 0];
-    } else if (preset === "isometric" || preset === "reset") {
-      targetPos = compact ? [4.8, 3.7, 5.2] : [5.6, 4.4, 6.2];
-    }
-
-    const endPosVector = new THREE.Vector3(...targetPos);
-    const endTargetVector = new THREE.Vector3(0, 0, 0);
-
-    transitionRef.current = {
-      active: true,
-      startPos: camera.position.clone(),
-      endPos: endPosVector,
-      startTarget: controlsRef.current ? controlsRef.current.target.clone() : new THREE.Vector3(0, 0, 0),
-      endTarget: endTargetVector,
-      progress: 0,
-    };
+    camera.position.set(pos[0], pos[1], pos[2]);
+    camera.lookAt(0, 0, 0);
 
     if (controlsRef.current) {
-      controlsRef.current.enabled = false;
+      controlsRef.current.target.set(0, 0, 0);
+      controlsRef.current.update();
     }
+  }, [viewFaceTarget.version, viewFaceTarget.face, compact, camera]);
 
-    onPresetDone();
-  }, [preset, camera, compact, onPresetDone]);
-
-  // If cameraMode changes to competitive, fly back to default and lock
-  useEffect(() => {
-    if (cameraMode === "competitive") {
-      const targetPos: [number, number, number] = compact ? [4.8, 3.7, 5.2] : [5.6, 4.4, 6.2];
-      const endPosVector = new THREE.Vector3(...targetPos);
-      const endTargetVector = new THREE.Vector3(0, 0, 0);
-
-      transitionRef.current = {
-        active: true,
-        startPos: camera.position.clone(),
-        endPos: endPosVector,
-        startTarget: controlsRef.current ? controlsRef.current.target.clone() : new THREE.Vector3(0, 0, 0),
-        endTarget: endTargetVector,
-        progress: 0,
-      };
-
-      if (controlsRef.current) {
-        controlsRef.current.enabled = false;
-      }
-    } else {
-      if (controlsRef.current && !(transitionRef.current?.active)) {
-        controlsRef.current.enabled = true;
-      }
-    }
-  }, [cameraMode, camera, compact]);
-
-  useFrame((_, delta) => {
-    const trans = transitionRef.current;
-    if (trans && trans.active) {
-      trans.progress = Math.min(1, trans.progress + delta * 2.5); // transition over ~0.4s
-      const eased = easeInOutCubic(trans.progress);
-
-      camera.position.lerpVectors(trans.startPos, trans.endPos, eased);
-      
-      if (controlsRef.current) {
-        controlsRef.current.target.lerpVectors(trans.startTarget, trans.endTarget, eased);
-        controlsRef.current.update();
-      }
-
-      if (trans.progress >= 1) {
-        trans.active = false;
-        if (controlsRef.current) {
-          controlsRef.current.enabled = (cameraMode === "free-orbit");
-        }
-      }
-    }
+  useFrame(() => {
+    const face = deriveFaceFromCameraPosition(camera.position);
+    setCurrentViewFace(face);
   });
 
   return (
     <OrbitControls
       ref={controlsRef}
       makeDefault
-      enabled={cameraMode === "free-orbit" && !(transitionRef.current?.active)}
-      enableDamping={!reducedMotion}
-      dampingFactor={0.08}
-      minDistance={1.8}
-      maxDistance={40.0}
+      enablePan={false}
+      enableZoom={true}
+      enableRotate={interactive && !compact && cameraMode === "free-rotation"}
       target={[0, 0, 0]}
+      minDistance={compact ? 6 : 7}
+      maxDistance={compact ? 14 : 16}
     />
   );
 }
@@ -475,9 +347,8 @@ function RotationArrow({ face, quarterTurns }: { face: string; quarterTurns: num
   const normal = FACE_NORMALS[face];
   if (!normal) return null;
   const center: [number, number, number] = [normal[0] * 1.62, normal[1] * 1.62, normal[2] * 1.62];
-  const rotation = getRotationForNormal(normal);
+  const rotation = getRotationForNormal([normal[0], normal[1], normal[2]]);
 
-  // If quarterTurns > 0, it's clockwise.
   const isClockwise = quarterTurns > 0;
   
   const arcLength = Math.PI;
@@ -493,13 +364,11 @@ function RotationArrow({ face, quarterTurns }: { face: string; quarterTurns: num
 
   return (
     <group position={center} rotation={rotation}>
-      {/* Curved Arc */}
       <mesh rotation={[Math.PI / 2, 0, isClockwise ? -Math.PI / 2 : -Math.PI / 2]}>
         <torusGeometry args={[radius, 0.045, 8, 32, arcLength]} />
         <meshStandardMaterial color="#818cf8" emissive="#818cf8" emissiveIntensity={0.8} toneMapped={false} />
       </mesh>
       
-      {/* Arrow Head */}
       <mesh position={[arrowX, 0, arrowZ]} rotation={[0, arrowRotY, 0]}>
         <coneGeometry args={[0.13, 0.3, 16]} />
         <meshStandardMaterial color="#818cf8" emissive="#818cf8" emissiveIntensity={0.8} toneMapped={false} />

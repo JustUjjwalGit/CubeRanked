@@ -10,31 +10,14 @@ interface BotRaceStats {
   losses: number;
 }
 
-function deepMerge<T extends Record<string, unknown>>(base: T, override: Partial<T>): T {
-  const result = { ...base };
-  for (const key of Object.keys(override) as (keyof T)[]) {
-    const baseVal = base[key];
-    const overrideVal = override[key];
-    if (
-      overrideVal !== null &&
-      overrideVal !== undefined &&
-      typeof baseVal === "object" &&
-      typeof overrideVal === "object" &&
-      !Array.isArray(baseVal) &&
-      !Array.isArray(overrideVal)
-    ) {
-      result[key] = deepMerge(baseVal as Record<string, unknown>, overrideVal as Record<string, unknown>) as T[keyof T];
-    } else if (overrideVal !== undefined) {
-      result[key] = overrideVal;
-    }
-  }
-  return result;
-}
-
 export function loadSettings(): SessionSettings {
   try {
-    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "null") as Partial<SessionSettings> | null;
-    return saved ? deepMerge(DEFAULT_SETTINGS, saved) : DEFAULT_SETTINGS;
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "null");
+    if (!saved || typeof saved !== "object") {
+      return DEFAULT_SETTINGS;
+    }
+    // Merge saved settings with defaults to ensure all required keys exist
+    return { ...DEFAULT_SETTINGS, ...saved } as SessionSettings;
   } catch {
     return DEFAULT_SETTINGS;
   }

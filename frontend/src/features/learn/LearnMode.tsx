@@ -184,17 +184,11 @@ const LESSONS: Lesson[] = [
 interface LearnModeProps {
   onBack: () => void;
   theme?: "dark" | "light";
-  cameraSensitivity?: number;
-  cameraZoomSpeed?: number;
-  cameraInvertVertical?: boolean;
 }
 
 export default function LearnMode({
   onBack,
   theme = "dark",
-  cameraSensitivity = 1.0,
-  cameraZoomSpeed = 1.0,
-  cameraInvertVertical = false,
 }: LearnModeProps) {
   const [activeLessonIdx, setActiveLessonIdx] = useState(0);
   const [activeStepIdx, setActiveStepIdx] = useState(0);
@@ -530,10 +524,7 @@ export default function LearnMode({
           <div className="learn-stage-container">
             <CubeScene
               theme={theme}
-              cameraMode="free-orbit"
-              cameraSensitivity={cameraSensitivity}
-              cameraZoomSpeed={cameraZoomSpeed}
-              cameraInvertVertical={cameraInvertVertical}
+              cameraMode="free-rotation"
               showVisuals={true}
               interactive={true}
             />

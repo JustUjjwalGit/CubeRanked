@@ -74,10 +74,6 @@ export default function PracticeScreen({
       <CubeScene 
         theme={settings.theme}
         cameraMode={settings.cameraMode}
-        cameraInvertVertical={settings.cameraInvertVertical}
-        cameraSensitivity={settings.cameraSensitivity}
-        cameraZoomSpeed={settings.cameraZoomSpeed}
-        defaultCameraFace={settings.defaultCameraFace}
         cubeStyle={settings.cubeStyle}
         reducedMotion={settings.reducedMotion}
       />
