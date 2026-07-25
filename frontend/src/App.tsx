@@ -1002,6 +1002,7 @@ export default function App() {
   useEffect(() => {
     const unsubscribeQueue = socketManager.onMatchEvent("queueUpdate", setQueueUpdate);
     const unsubscribeFound = socketManager.onMatchEvent("found", (payload) => {
+      audioManager.playMatchFound();
       applyOnlineMatch(payload);
       dispatch({ type: "MATCH_FOUND" });
       window.setTimeout(() => socketManager.sendReady(payload.matchId), 450);
@@ -1216,6 +1217,13 @@ export default function App() {
       unsubscribeResults();
     };
   }, [applyOnlineMatch, elapsedMs, socketSnapshot.clientId]);
+
+  // Play notification sound when invite or friend request arrives
+  useEffect(() => {
+    if (socketSnapshot.incomingInvite) {
+      audioManager.playNotification();
+    }
+  }, [socketSnapshot.incomingInvite]);
 
   // Network recovery & cleanup effect
   const [reconnectCountdown, setReconnectCountdown] = useState<number | null>(null);
@@ -1612,6 +1620,7 @@ export default function App() {
             key="identity"
             onGuest={() => {
               auth.continueAsGuest();
+              auth.dismissFirstVisit();
             }}
             onGoogle={() => {
               auth.dismissFirstVisit();

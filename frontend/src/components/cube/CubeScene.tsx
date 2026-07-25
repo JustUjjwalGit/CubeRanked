@@ -18,6 +18,7 @@ import {
   type Vec3,
 } from "../../utils/cubeEngine";
 import { useCubeStore } from "../../state/cubeStore";
+import { audioManager } from "../../utils/audioManager";
 import type { Face } from "../../utils/cubeEngine";
 import type { CubeStyle } from "../../utils/sessionStats";
 
@@ -197,6 +198,8 @@ function CameraManager({
   const viewFaceTarget = useCubeStore((state) => state.viewFaceTarget);
   const setCurrentViewFace = useCubeStore((state) => state.setCurrentViewFace);
   const lastVersion = useRef(viewFaceTarget.version);
+  const isDragging = useRef(false);
+  const lastDragSound = useRef(0);
 
   useEffect(() => {
     if (viewFaceTarget.version === lastVersion.current) return;
@@ -217,6 +220,15 @@ function CameraManager({
   useFrame(() => {
     const face = deriveFaceFromCameraPosition(camera.position);
     setCurrentViewFace(face);
+
+    // Soft friction sound during drag
+    if (isDragging.current) {
+      const now = performance.now();
+      if (now - lastDragSound.current > 180) {
+        lastDragSound.current = now;
+        audioManager.playCubeDrag();
+      }
+    }
   });
 
   return (
@@ -229,6 +241,8 @@ function CameraManager({
       target={[0, 0, 0]}
       minDistance={compact ? 6 : 7}
       maxDistance={compact ? 14 : 16}
+      onStart={() => { isDragging.current = true; }}
+      onEnd={() => { isDragging.current = false; }}
     />
   );
 }

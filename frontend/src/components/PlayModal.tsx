@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { X, Gamepad2, Lock } from "lucide-react";
+import { audioManager } from "../utils/audioManager";
 
 const playModes = [
   { title: "Practice", description: "Offline 3x3 trainer", available: true, mode: "practice" },
@@ -43,7 +44,7 @@ export default function PlayModal({
             <span>Play</span>
             <h2>Select Mode</h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close play menu">
+          <button type="button" onClick={() => { audioManager.playButtonClick(); onClose(); }} aria-label="Close play menu">
             <X size={18} aria-hidden="true" />
           </button>
         </div>
@@ -54,17 +55,15 @@ export default function PlayModal({
               type="button"
               key={mode.title}
               className={mode.available ? "mode-card available" : "mode-card locked"}
-              onClick={
-                mode.mode === "practice"
-                  ? onPractice
-                  : mode.mode === "bot-race"
-                    ? onBotRace
-                    : mode.mode === "ranked"
-                      ? onRanked
-                      : mode.mode === "private"
-                        ? onPrivate
-                        : () => onLockedMode(mode.title)
-              }
+              onMouseEnter={() => audioManager.playButtonHover()}
+              onClick={() => {
+                audioManager.playButtonClick();
+                if (mode.mode === "practice") onPractice();
+                else if (mode.mode === "bot-race") onBotRace();
+                else if (mode.mode === "ranked") onRanked();
+                else if (mode.mode === "private") onPrivate();
+                else onLockedMode(mode.title);
+              }}
             >
               <div className="mode-icon">
                 {mode.available ? <Gamepad2 size={24} aria-hidden="true" /> : <Lock size={22} aria-hidden="true" />}

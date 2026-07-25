@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from "react";
-import { motion } from "framer-motion";
-import { X, Users, UserPlus, Check, Trash2, Play } from "lucide-react";
+import { useState, type FormEvent, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { X, Users, UserPlus, Check, Trash2, Play, Search, Clock } from "lucide-react";
 import { socketManager } from "../../network/socketManager";
 import type { SocketDebugSnapshot } from "../../network/socketTypes";
 
@@ -26,11 +26,29 @@ const formatActivity = (act: string) => {
   }
 };
 
+function FriendSkeleton() {
+  return (
+    <div className="social-skeleton">
+      <div className="social-skeleton-avatar" />
+      <div className="social-skeleton-lines">
+        <div className="social-skeleton-name" />
+        <div className="social-skeleton-status" />
+      </div>
+    </div>
+  );
+}
+
 export default function SocialSidebar({ snapshot, onClose }: SocialSidebarProps) {
   const [activeTab, setActiveTab] = useState<"friends" | "requests" | "recent" | "privacy">("friends");
   const [addUsername, setAddUsername] = useState("");
   const [adding, setAdding] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setLoaded(true), 400);
+    return () => clearTimeout(t);
+  }, []);
 
   const friends = snapshot.friends || [];
   const requests = snapshot.friendRequests || [];
@@ -50,226 +68,293 @@ export default function SocialSidebar({ snapshot, onClose }: SocialSidebarProps)
     }, 600);
   };
 
+  const tabs: Array<{ key: typeof activeTab; label: string; badge?: number }> = [
+    { key: "friends", label: "Friends", badge: friends.length },
+    { key: "requests", label: "Requests", badge: requests.length },
+    { key: "recent", label: "Recents" },
+    { key: "privacy", label: "Privacy" },
+  ];
+
   return (
     <motion.aside
       className="social-sidebar"
       initial={{ x: "100%" }}
       animate={{ x: 0 }}
       exit={{ x: "100%" }}
-      transition={{ type: "spring", stiffness: 220, damping: 24 }}
+      transition={{ type: "spring", stiffness: 220, damping: 26 }}
     >
-      <div className="social-sidebar-header">
-        <div className="social-sidebar-heading">
-          <Users size={20} />
-          <h2>Social Dashboard</h2>
+      {/* Header */}
+      <div className="social-header">
+        <div className="social-header-left">
+          <div className="social-header-icon">
+            <Users size={18} />
+          </div>
+          <h2>Social</h2>
         </div>
-        <button type="button" onClick={onClose} className="social-sidebar-close" aria-label="Close social">
+        <button type="button" onClick={onClose} className="social-close-btn" aria-label="Close social">
           <X size={16} />
         </button>
       </div>
 
-      <div className="social-sidebar-tabs">
-        {(["friends", "requests", "recent", "privacy"] as const).map((tab) => (
+      {/* Tabs */}
+      <div className="social-tabs">
+        {tabs.map((tab) => (
           <button
-            key={tab}
+            key={tab.key}
             type="button"
-            className={`social-sidebar-tab ${activeTab === tab ? "active" : ""}`}
-            onClick={() => setActiveTab(tab)}
+            className={`social-tab ${activeTab === tab.key ? "active" : ""}`}
+            onClick={() => setActiveTab(tab.key)}
           >
-            {tab === "friends" ? `Friends (${friends.length})` :
-             tab === "requests" ? `Requests (${requests.length})` :
-             tab === "recent" ? "Recents" : "Privacy"}
+            {tab.label}
+            {tab.badge !== undefined && tab.badge > 0 && (
+              <span className="social-tab-badge">{tab.badge}</span>
+            )}
           </button>
         ))}
       </div>
 
-      <div className="social-sidebar-content">
-        {activeTab === "friends" && (
-          <>
-            <form className="social-sidebar-add-form" onSubmit={handleAddFriendSubmit}>
-              <input
-                className="social-sidebar-input"
-                value={addUsername}
-                onChange={(e) => setAddUsername(e.target.value)}
-                placeholder="Enter friend's username"
-              />
-              <button type="submit" className="social-sidebar-add-btn" disabled={adding}>
-                <UserPlus size={16} />
-              </button>
-            </form>
+      {/* Content */}
+      <div className="social-content">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.18 }}
+          >
+            {activeTab === "friends" && (
+              <>
+                {/* Search / Add Friend */}
+                <form className="social-search-form" onSubmit={handleAddFriendSubmit}>
+                  <Search size={14} className="social-search-icon" />
+                  <input
+                    className="social-search-input"
+                    value={addUsername}
+                    onChange={(e) => setAddUsername(e.target.value)}
+                    placeholder="Add friend by username"
+                  />
+                  <button type="submit" className="social-search-btn" disabled={adding || !addUsername.trim()}>
+                    <UserPlus size={14} />
+                  </button>
+                </form>
 
-            {feedback && (
-              <div className={`social-sidebar-feedback ${feedback.type}`}>
-                {feedback.message}
-              </div>
+                {feedback && (
+                  <div className={`social-feedback ${feedback.type}`}>
+                    {feedback.message}
+                  </div>
+                )}
+
+                {/* Friends List */}
+                <div className="social-list">
+                  {!loaded ? (
+                    <>
+                      <FriendSkeleton />
+                      <FriendSkeleton />
+                      <FriendSkeleton />
+                    </>
+                  ) : friends.length === 0 ? (
+                    <div className="social-empty">
+                      <Users size={24} className="social-empty-icon" />
+                      <p>No friends yet</p>
+                      <span>Add friends to race together</span>
+                    </div>
+                  ) : (
+                    friends.map((friend: any, i: number) => (
+                      <motion.div
+                        key={friend.id}
+                        className="social-friend-card"
+                        initial={{ opacity: 0, y: 12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: i * 0.04, duration: 0.25 }}
+                      >
+                        <div className="social-friend-avatar">
+                          {friend.avatar
+                            ? <img src={friend.avatar} alt="" />
+                            : <span>{friend.username.slice(0, 2).toUpperCase()}</span>
+                          }
+                          <span
+                            className="social-presence-dot"
+                            style={{
+                              background: friend.online
+                                ? activityColors[friend.activity] || "#22c55e"
+                                : "#475569",
+                            }}
+                          />
+                        </div>
+                        <div className="social-friend-info">
+                          <span className="social-friend-name">{friend.username}</span>
+                          <span
+                            className="social-friend-status"
+                            style={{
+                              color: friend.online
+                                ? (activityColors[friend.activity] || "#64748b")
+                                : "#475569",
+                            }}
+                          >
+                            {friend.online ? formatActivity(friend.activity) : "Offline"}
+                          </span>
+                        </div>
+                        <div className="social-friend-actions">
+                          {friend.online && (
+                            <button
+                              type="button"
+                              className="social-action-btn primary"
+                              title="Invite to Private Room"
+                              onClick={() => {
+                                if (snapshot.roomState) {
+                                  socketManager.sendDirectInvite(friend.id, "private-room", snapshot.roomState.code);
+                                } else {
+                                  socketManager.joinRoom("");
+                                }
+                              }}
+                            >
+                              <Play size={12} fill="currentColor" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="social-action-btn danger"
+                            title="Remove Friend"
+                            onClick={() => socketManager.removeFriend(friend.id)}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </motion.div>
+                    ))
+                  )}
+                </div>
+              </>
             )}
 
-            <div className="social-sidebar-list">
-              {friends.length === 0 ? (
-                <div className="social-sidebar-empty">Your friends list is currently empty.</div>
-              ) : (
-                friends.map((friend: any) => (
-                  <div key={friend.id} className="social-sidebar-item">
-                    <div className="social-sidebar-user">
-                      <div className="social-sidebar-avatar">
-                        {friend.avatar
-                          ? <img src={friend.avatar} alt="" />
-                          : friend.username.slice(0, 2).toUpperCase()
+            {activeTab === "requests" && (
+              <div className="social-list">
+                {requests.length === 0 ? (
+                  <div className="social-empty">
+                    <UserPlus size={24} className="social-empty-icon" />
+                    <p>No pending requests</p>
+                    <span>Friend requests will appear here</span>
+                  </div>
+                ) : (
+                  requests.map((req: any) => (
+                    <div key={req.fromId} className="social-friend-card">
+                      <div className="social-friend-avatar">
+                        {req.fromAvatar
+                          ? <img src={req.fromAvatar} alt="" />
+                          : <span>{req.fromUsername.slice(0, 2).toUpperCase()}</span>
                         }
-                        <span
-                          className="social-sidebar-status-dot"
-                          style={{ background: friend.online ? activityColors[friend.activity] || "#64748b" : "#64748b" }}
-                        />
                       </div>
-                      <div>
-                        <span className="social-sidebar-name">{friend.username}</span>
-                        <span
-                          className="social-sidebar-activity"
-                          style={{ color: friend.online ? (activityColors[friend.activity] || "#64748b") : "#64748b" }}
-                        >
-                          {friend.online ? formatActivity(friend.activity) : "Offline"}
-                        </span>
+                      <div className="social-friend-info">
+                        <span className="social-friend-name">{req.fromUsername}</span>
+                        <span className="social-friend-status" style={{ color: "#64748b" }}>Wants to be friends</span>
                       </div>
-                    </div>
-                    <div className="social-sidebar-actions">
-                      {friend.online && (
+                      <div className="social-friend-actions">
                         <button
                           type="button"
-                          className="social-sidebar-icon-btn primary"
-                          title="Invite to Private Room"
-                          onClick={() => {
-                            if (snapshot.roomState) {
-                              socketManager.sendDirectInvite(friend.id, "private-room", snapshot.roomState.code);
-                            } else {
-                              socketManager.joinRoom("");
-                            }
-                          }}
+                          className="social-action-btn success"
+                          title="Accept"
+                          onClick={() => socketManager.respondFriendRequest(req.fromId, true)}
                         >
-                          <Play size={12} fill="#818cf8" />
+                          <Check size={14} />
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        className="social-sidebar-icon-btn danger"
-                        title="Remove Friend"
-                        onClick={() => socketManager.removeFriend(friend.id)}
-                      >
-                        <Trash2 size={12} />
-                      </button>
+                        <button
+                          type="button"
+                          className="social-action-btn danger"
+                          title="Decline"
+                          onClick={() => socketManager.respondFriendRequest(req.fromId, false)}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </>
-        )}
-
-        {activeTab === "requests" && (
-          <div className="social-sidebar-list">
-            {requests.length === 0 ? (
-              <div className="social-sidebar-empty">No pending friend requests.</div>
-            ) : (
-              requests.map((req: any) => (
-                <div key={req.fromId} className="social-sidebar-item">
-                  <div className="social-sidebar-user">
-                    <div className="social-sidebar-avatar">
-                      {req.fromAvatar
-                        ? <img src={req.fromAvatar} alt="" />
-                        : req.fromUsername.slice(0, 2).toUpperCase()
-                      }
-                    </div>
-                    <div>
-                      <span className="social-sidebar-name">{req.fromUsername}</span>
-                      <span className="social-sidebar-activity" style={{ color: "#64748b" }}>wants to add you</span>
-                    </div>
-                  </div>
-                  <div className="social-sidebar-actions">
-                    <button
-                      type="button"
-                      className="social-sidebar-icon-btn success"
-                      onClick={() => socketManager.respondFriendRequest(req.fromId, true)}
-                    >
-                      <Check size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="social-sidebar-icon-btn neutral"
-                      onClick={() => socketManager.respondFriendRequest(req.fromId, false)}
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                </div>
-              ))
+                  ))
+                )}
+              </div>
             )}
-          </div>
-        )}
 
-        {activeTab === "recent" && (
-          <div className="social-sidebar-list">
-            {recents.length === 0 ? (
-              <div className="social-sidebar-empty">
-                No recent opponents found. Play matchmade races to track them here!
+            {activeTab === "recent" && (
+              <div className="social-list">
+                {recents.length === 0 ? (
+                  <div className="social-empty">
+                    <Clock size={24} className="social-empty-icon" />
+                    <p>No recent opponents</p>
+                    <span>Play matchmade races to track them</span>
+                  </div>
+                ) : (
+                  recents.map((recent: any) => (
+                    <div key={recent.userId} className="social-friend-card">
+                      <div className="social-friend-avatar">
+                        {recent.avatar
+                          ? <img src={recent.avatar} alt="" />
+                          : <span>{recent.username.slice(0, 2).toUpperCase()}</span>
+                        }
+                      </div>
+                      <div className="social-friend-info">
+                        <span className="social-friend-name">{recent.username}</span>
+                        <span className="social-friend-status" style={{ color: "#64748b" }}>
+                          Played {new Date(recent.playedAt).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <div className="social-friend-actions">
+                        <button
+                          type="button"
+                          className="social-action-btn neutral"
+                          onClick={() => socketManager.sendFriendRequest(recent.username)}
+                          title="Add Friend"
+                        >
+                          <UserPlus size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
-            ) : (
-              recents.map((recent: any) => (
-                <div key={recent.userId} className="social-sidebar-item">
-                  <div className="social-sidebar-user">
-                    <div className="social-sidebar-avatar">
-                      {recent.avatar
-                        ? <img src={recent.avatar} alt="" />
-                        : recent.username.slice(0, 2).toUpperCase()
-                      }
-                    </div>
-                    <div>
-                      <span className="social-sidebar-name">{recent.username}</span>
-                      <span className="social-sidebar-activity" style={{ color: "#64748b" }}>
-                        Played {new Date(recent.playedAt).toLocaleDateString()}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="social-sidebar-actions">
-                    <button
-                      type="button"
-                      className="social-sidebar-icon-btn neutral"
-                      onClick={() => socketManager.sendFriendRequest(recent.username)}
-                      title="Add Friend"
-                    >
-                      <UserPlus size={14} />
-                    </button>
-                  </div>
-                </div>
-              ))
             )}
-          </div>
-        )}
 
-        {activeTab === "privacy" && (
-          <div className="social-sidebar-privacy">
-            <h4>Privacy Permissions</h4>
-            <label>
-              <div>
-                <span>Show Online Status</span>
-                <small>Allows friends to see when you are active.</small>
+            {activeTab === "privacy" && (
+              <div className="social-privacy">
+                <h4>Privacy</h4>
+                <label className="social-privacy-row">
+                  <div className="social-privacy-info">
+                    <span>Show Online Status</span>
+                    <small>Let friends see when you&apos;re active</small>
+                  </div>
+                  <div className="social-toggle">
+                    <input type="checkbox" defaultChecked />
+                    <span className="social-toggle-track">
+                      <span className="social-toggle-thumb" />
+                    </span>
+                  </div>
+                </label>
+                <label className="social-privacy-row">
+                  <div className="social-privacy-info">
+                    <span>Allow Friend Requests</span>
+                    <small>Let others add you as a friend</small>
+                  </div>
+                  <div className="social-toggle">
+                    <input type="checkbox" defaultChecked />
+                    <span className="social-toggle-track">
+                      <span className="social-toggle-thumb" />
+                    </span>
+                  </div>
+                </label>
+                <label className="social-privacy-row">
+                  <div className="social-privacy-info">
+                    <span>Allow Private Invites</span>
+                    <small>Let friends invite you to lobbies</small>
+                  </div>
+                  <div className="social-toggle">
+                    <input type="checkbox" defaultChecked />
+                    <span className="social-toggle-track">
+                      <span className="social-toggle-thumb" />
+                    </span>
+                  </div>
+                </label>
               </div>
-              <input type="checkbox" defaultChecked />
-            </label>
-            <label>
-              <div>
-                <span>Allow Friend Requests</span>
-                <small>Enables other cubers to add you as a friend.</small>
-              </div>
-              <input type="checkbox" defaultChecked />
-            </label>
-            <label>
-              <div>
-                <span>Allow Private Invites</span>
-                <small>Enables direct lobby race invites from friends.</small>
-              </div>
-              <input type="checkbox" defaultChecked />
-            </label>
-          </div>
-        )}
+            )}
+          </motion.div>
+        </AnimatePresence>
       </div>
     </motion.aside>
   );

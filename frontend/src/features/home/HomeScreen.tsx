@@ -13,6 +13,7 @@ import {
 import AppBackground from "../../components/AppBackground";
 import SocialSidebar from "../profile/SocialSidebar";
 import { connectionLabel } from "../../utils/helpers";
+import { audioManager } from "../../utils/audioManager";
 import type { SocketConnectionState, SocketDebugSnapshot } from "../../network/socketTypes";
 import type { UserProfile } from "../../api/auth";
 
@@ -169,7 +170,7 @@ export default function HomeScreen({
         </div>
         
         <div className="lobby-modes-grid">
-          <button type="button" className="lobby-mode-card" onClick={onPractice}>
+          <button type="button" className="lobby-mode-card" onClick={() => { audioManager.playButtonClick(); onPractice(); }} onMouseEnter={() => audioManager.playButtonHover()}>
             <div className="mode-card-icon-wrap icon-practice">
               <Gamepad2 size={28} />
             </div>
@@ -182,7 +183,7 @@ export default function HomeScreen({
             </div>
           </button>
 
-          <button type="button" className="lobby-mode-card" onClick={onBotRace}>
+          <button type="button" className="lobby-mode-card" onClick={() => { audioManager.playButtonClick(); onBotRace(); }} onMouseEnter={() => audioManager.playButtonHover()}>
             <div className="mode-card-icon-wrap icon-bot">
               <Tv size={28} />
             </div>
@@ -195,7 +196,7 @@ export default function HomeScreen({
             </div>
           </button>
 
-          <button type="button" className="lobby-mode-card" onClick={onRanked}>
+          <button type="button" className="lobby-mode-card" onClick={() => { audioManager.playButtonClick(); onRanked(); }} onMouseEnter={() => audioManager.playButtonHover()}>
             <div className="mode-card-icon-wrap icon-ranked">
               <Trophy size={28} />
             </div>
@@ -208,7 +209,7 @@ export default function HomeScreen({
             </div>
           </button>
 
-          <button type="button" className="lobby-mode-card" onClick={onPrivate}>
+          <button type="button" className="lobby-mode-card" onClick={() => { audioManager.playButtonClick(); onPrivate(); }} onMouseEnter={() => audioManager.playButtonHover()}>
             <div className="mode-card-icon-wrap icon-private">
               <Users size={28} />
             </div>
@@ -221,7 +222,7 @@ export default function HomeScreen({
             </div>
           </button>
 
-          <button type="button" className="lobby-mode-card learn-featured-card" onClick={onLearn} style={{ gridColumn: "span 2" }}>
+          <button type="button" className="lobby-mode-card learn-featured-card" onClick={() => { audioManager.playButtonClick(); onLearn(); }} onMouseEnter={() => audioManager.playButtonHover()} style={{ gridColumn: "span 2" }}>
             <div className="mode-card-icon-wrap icon-learn">
               <GraduationCap size={28} />
             </div>

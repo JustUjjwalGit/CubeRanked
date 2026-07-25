@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import { Keyboard, X, Download, Upload, RotateCcw } from "lucide-react";
+import { audioManager } from "../utils/audioManager";
 import {
   DEFAULT_SETTINGS,
   type SessionSettings,
@@ -126,7 +127,7 @@ export default function AppSettingsDialog({
             <span>Application</span>
             <h2>Settings</h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close settings">
+          <button type="button" onClick={() => { audioManager.playButtonClick(); onClose(); }} aria-label="Close settings">
             <X size={18} aria-hidden="true" />
           </button>
         </div>
@@ -138,7 +139,7 @@ export default function AppSettingsDialog({
                 type="button"
                 key={item}
                 className={category === item ? "selected" : ""}
-                onClick={() => onCategory(item)}
+                onClick={() => { audioManager.playButtonHover(); onCategory(item); }}
               >
                 {item}
               </button>
@@ -183,7 +184,7 @@ export default function AppSettingsDialog({
                   <div className="theme-toggle-container" style={{ marginTop: "8px" }}>
                     <button
                       className={`premium-theme-toggle ${settings.theme === "dark" ? "is-dark" : "is-light"}`}
-                      onClick={() => onSettings({ theme: settings.theme === "dark" ? "light" : "dark" })}
+                      onClick={() => { audioManager.playThemeSwitch(); onSettings({ theme: settings.theme === "dark" ? "light" : "dark" }); }}
                       aria-label="Toggle theme"
                     >
                       <motion.div className="theme-toggle-orb" layout transition={{ type: "spring", stiffness: 500, damping: 30 }}>

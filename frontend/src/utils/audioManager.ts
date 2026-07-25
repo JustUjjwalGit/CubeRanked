@@ -269,21 +269,11 @@ export const audioManager = {
       });
 
       element.onended = () => {
-        // Fade out over 3 seconds
-        if (this._bgmGain) {
-          try {
-            const now = ac.currentTime;
-            this._bgmGain.gain.cancelScheduledValues(now);
-            this._bgmGain.gain.setValueAtTime(this._bgmGain.gain.value, now);
-            this._bgmGain.gain.linearRampToValueAtTime(0, now + FADE_DURATION);
-          } catch { /* ignore */ }
-        }
-
-        this._bgmFadeId = setTimeout(() => {
-          this._bgmFadeId = null;
-          this._cleanupBgm();
-          this._scheduleBgm();
-        }, FADE_DURATION * 1000 + 200);
+        // Audio naturally ended — clean up immediately and schedule next play.
+        // No gain manipulation needed: the element has already stopped producing
+        // audio, and cancelling/ramping gain on a finished track creates clicks.
+        this._cleanupBgm();
+        this._scheduleBgm();
       };
     } catch {
       this._cleanupBgm();
@@ -404,5 +394,41 @@ export const audioManager = {
 
   playQueuePop() {
     playUiTone(1200, 0.06, 0.05);
+  },
+
+  /** Soft plastic friction sound while dragging the cube. ~10-15% volume, pitch varies. */
+  playCubeDrag() {
+    try {
+      const ac = getCtx();
+      const bufferSize = ac.sampleRate * 0.08;
+      const buffer = ac.createBuffer(1, bufferSize, ac.sampleRate);
+      const data = buffer.getChannelData(0);
+      // Filtered noise — soft friction, not clicky
+      let prev = 0;
+      for (let i = 0; i < bufferSize; i++) {
+        const noise = Math.random() * 2 - 1;
+        data[i] = prev + (noise - prev) * 0.06;
+        prev = data[i];
+      }
+      const source = ac.createBufferSource();
+      source.buffer = buffer;
+
+      const g = ac.createGain();
+      const vol = Math.max(0, 0.12 * (this._masterVol ?? 1) * (this._sfxVol ?? 1));
+      if (vol <= 0) { source.disconnect(); g.disconnect(); return; }
+
+      // Pitch variation — frequency multiply
+      source.playbackRate.value = 0.8 + Math.random() * 0.4;
+
+      const now = ac.currentTime;
+      g.gain.setValueAtTime(0, now);
+      g.gain.linearRampToValueAtTime(vol, now + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+
+      source.connect(g);
+      g.connect(ac.destination);
+      source.start(now);
+      source.stop(now + 0.1);
+    } catch { /* silent */ }
   },
 };
