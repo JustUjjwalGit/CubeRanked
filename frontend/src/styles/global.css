@@ -1249,144 +1249,79 @@ button {
   color: #0f172a;
 }
 
-.custom-cursor-ready,
-.custom-cursor-ready * {
+.codrops-cursor-ready,
+.codrops-cursor-ready a,
+.codrops-cursor-ready button,
+.codrops-cursor-ready [role="button"] {
   cursor: none;
 }
 
-.premium-cursor {
-  --cursor-ring: rgba(196, 214, 255, 0.58);
-  --cursor-ring-fill: rgba(129, 140, 248, 0.08);
-  --cursor-dot: rgba(248, 250, 252, 0.96);
-  --cursor-glow: rgba(129, 140, 248, 0.22);
-  --cursor-distortion: 0;
+.codrops-cursor {
+  --codrops-cursor-color: #f8fafc;
+  --codrops-cursor-accent: #ef4444;
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: 12000;
   pointer-events: none;
-  mix-blend-mode: normal;
 }
 
-:root[data-theme="light"] .premium-cursor {
-  --cursor-ring: rgba(54, 45, 87, 0.58);
-  --cursor-ring-fill: rgba(99, 102, 241, 0.06);
-  --cursor-dot: rgba(23, 23, 30, 0.94);
-  --cursor-glow: rgba(99, 102, 241, 0.18);
+:root[data-theme="light"] .codrops-cursor {
+  --codrops-cursor-color: #171717;
+  --codrops-cursor-accent: #dc2626;
 }
 
-.premium-cursor[data-hidden="true"] {
-  opacity: 0;
-}
-
-.premium-cursor-filter {
-  position: absolute;
-}
-
-.premium-cursor-dot,
-.premium-cursor-outer,
-.premium-cursor-crosshair,
-.premium-cursor-pulse {
+.circle-cursor {
   position: fixed;
   left: 0;
   top: 0;
   pointer-events: none;
-  will-change: transform, opacity;
-}
-
-.premium-cursor-dot {
-  width: 4px;
-  height: 4px;
   border-radius: 50%;
-  background: var(--cursor-dot);
-  box-shadow: 0 0 9px var(--cursor-glow);
-  transform: translate3d(50vw, 50vh, 0) translate(-50%, -50%);
+  opacity: 1;
+  transition: opacity 160ms ease, width 200ms ease, height 200ms ease, border-color 200ms ease, background-color 200ms ease;
+  will-change: transform, opacity, width, height;
 }
 
-.premium-cursor-outer {
+.circle-cursor[data-hidden="true"] {
+  opacity: 0;
+}
+
+.circle-cursor--inner {
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  margin-top: -2.5px;
+  z-index: 12001;
+  background: var(--codrops-cursor-color);
+}
+
+.circle-cursor--outer {
   width: 30px;
   height: 30px;
-  border: 1.4px solid var(--cursor-ring);
-  border-radius: 48% 52% 45% 55% / 52% 46% 54% 48%;
-  background:
-    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.12), transparent 42%),
-    var(--cursor-ring-fill);
-  transform: translate3d(50vw, 50vh, 0) translate(-50%, -50%);
-  transition: opacity 160ms ease, border-color 180ms ease, background-color 180ms ease;
+  z-index: 12000;
+  border: 1px solid var(--codrops-cursor-color);
+  opacity: 0.24;
 }
 
-.premium-cursor-crosshair {
-  width: 54px;
-  height: 54px;
-  transform: translate3d(50vw, 50vh, 0) translate(-50%, -50%);
-  transition: opacity 160ms ease;
+.circle-cursor--outer[data-state="stuck"] {
+  border-color: var(--codrops-cursor-accent);
+  background: color-mix(in srgb, var(--codrops-cursor-accent) 16%, transparent);
+  opacity: 0.42;
+  border-radius: 10px;
 }
 
-.premium-cursor-crosshair .mark {
-  position: absolute;
-  display: block;
-  background: var(--cursor-ring);
-  border-radius: 999px;
-  opacity: 0.85;
-}
-
-.premium-cursor-crosshair .top,
-.premium-cursor-crosshair .bottom {
-  left: 50%;
-  width: 1px;
-  height: 7px;
-  transform: translateX(-50%);
-}
-
-.premium-cursor-crosshair .top {
-  top: 2px;
-}
-
-.premium-cursor-crosshair .bottom {
-  bottom: 2px;
-}
-
-.premium-cursor-crosshair .left,
-.premium-cursor-crosshair .right {
-  top: 50%;
-  width: 7px;
-  height: 1px;
-  transform: translateY(-50%);
-}
-
-.premium-cursor-crosshair .left {
-  left: 2px;
-}
-
-.premium-cursor-crosshair .right {
-  right: 2px;
-}
-
-.premium-cursor-pulse {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  border: 1px solid var(--cursor-ring);
+.circle-cursor--outer[data-state="text"] {
   opacity: 0;
-  transform: translate(-50%, -50%) scale(0.4);
-}
-
-.premium-cursor[data-mode="interactive"] .premium-cursor-outer {
-  border-color: rgba(165, 180, 252, 0.78);
-  background: rgba(129, 140, 248, 0.13);
-}
-
-:root[data-theme="light"] .premium-cursor[data-mode="interactive"] .premium-cursor-outer {
-  border-color: rgba(79, 70, 229, 0.58);
-  background: rgba(79, 70, 229, 0.08);
 }
 
 @media (pointer: coarse), (hover: none), (prefers-reduced-motion: reduce) {
-  .custom-cursor-ready,
-  .custom-cursor-ready * {
+  .codrops-cursor-ready,
+  .codrops-cursor-ready a,
+  .codrops-cursor-ready button,
+  .codrops-cursor-ready [role="button"] {
     cursor: auto;
   }
 
-  .premium-cursor {
+  .codrops-cursor {
     display: none;
   }
 }
