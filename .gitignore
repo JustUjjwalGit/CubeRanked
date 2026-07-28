@@ -18,3 +18,8 @@ backend/data
 !.env.example
 !backend/.env.example
 !frontend/.env.example
+
+# Local tunnel credentials/config
+ngrok.yml
+.ngrok2/
+.config/ngrok/

@@ -19,6 +19,7 @@ import type {
   RoomSettings,
   RoomState,
 } from "./socketTypes";
+import { SOCKET_URL } from "../config";
 
 type SnapshotListener = (snapshot: SocketDebugSnapshot) => void;
 type RemoteMoveListener = (payload: RemoteCubeMovePayload) => void;
@@ -98,7 +99,7 @@ interface ClientToServerEvents {
   "session:authenticate": (payload: { username: string; avatar: string | null }) => void;
 }
 
-const socketBaseUrl = import.meta.env.VITE_SOCKET_URL ?? `http://${window.location.hostname}:4000/v1`;
+const socketBaseUrl = SOCKET_URL;
 const CLIENT_ID_KEY = "cuberanked.clientId";
 
 class CubeRankedSocketManager {

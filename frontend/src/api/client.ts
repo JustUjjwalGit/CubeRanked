@@ -1,3 +1,5 @@
+import { API_URL } from "../config";
+
 export type HealthState = "connecting" | "connected" | "offline";
 
 export interface ApiFailure {
@@ -21,9 +23,7 @@ export interface ApiHealthResponse {
   };
 }
 
-const apiBaseUrl = import.meta.env.VITE_API_URL
-  ? `${import.meta.env.VITE_API_URL}/api/v1`
-  : `http://${window.location.hostname}:4000/api/v1`;
+const apiBaseUrl = API_URL;
 
 export async function fetchHealth(signal?: AbortSignal): Promise<ApiHealthResponse["data"]> {
   const response = await fetch(`${apiBaseUrl}/health`, {

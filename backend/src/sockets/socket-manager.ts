@@ -844,7 +844,10 @@ export function createSocketManager(app: FastifyInstance) {
       player.ready = true;
       player.status = "ready";
       emitMatchState(match);
-      startCountdown(match);
+
+      if (match.players.every(p => p.ready)) {
+        startCountdown(match);
+      }
     });
 
     socket.on("match:move", (payload: MatchMovePayload) => {

@@ -1,8 +1,7 @@
 import type { SessionSettings, SolveRecord } from "../utils/sessionStats";
+import { API_URL } from "../config";
 
-const apiBaseUrl = import.meta.env.VITE_API_URL
-  ? `${import.meta.env.VITE_API_URL}/api/v1`
-  : `http://${window.location.hostname}:4000/api/v1`;
+const apiBaseUrl = API_URL;
 
 export interface UserStatistics {
   gamesPlayed: number;

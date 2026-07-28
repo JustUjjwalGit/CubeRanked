@@ -1,5 +1,9 @@
 {
   "name": "cuberanked-monorepo",
   "version": "0.1.0",
-  "private": true
+  "private": true,
+  "scripts": {
+    "dev:public": "docker compose up --build",
+    "tunnel": "bash scripts/dev-tunnel.sh"
+  }
 }
