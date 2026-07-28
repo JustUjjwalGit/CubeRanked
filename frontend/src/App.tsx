@@ -110,7 +110,7 @@ import CompactTimer from "./components/CompactTimer";
 import ResultsModal from "./components/ResultsModal";
 import PauseMenu from "./components/PauseMenu";
 import PracticeSettingsPopover from "./components/PracticeSettingsPopover";
-import CodropsCursor from "./components/CodropsCursor";
+import CrosshairDistortionCursor from "./components/CrosshairDistortionCursor";
 import AppSettingsDialog from "./components/AppSettingsDialog";
 import ProfileDialog from "./features/profile/ProfileDialog";
 import KeyboardCheatSheet from "./components/KeyboardCheatSheet";
@@ -1714,11 +1714,11 @@ export default function App() {
     && overlay === "NONE"
     && (stage === "HOME" || stage === "MODE_SELECT");
   const profileCursorScreen = authModal === "profile" && overlay === "NONE";
-  const showCodropsCursor = loginCursorScreen || homeCursorScreen || profileCursorScreen;
+  const showCrosshairCursor = loginCursorScreen || homeCursorScreen || profileCursorScreen;
 
   return (
     <>
-      {showCodropsCursor ? <CodropsCursor disabled={settings.reducedMotion} /> : null}
+      {showCrosshairCursor ? <CrosshairDistortionCursor disabled={settings.reducedMotion} /> : null}
       <div id="app-scale-root">
     <main className="client-shell">
       {/* First-run identity chooser screen */}
