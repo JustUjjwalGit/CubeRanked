@@ -1249,42 +1249,6 @@ button {
   color: #0f172a;
 }
 
-.mouse-follow-glow {
-  --mouse-glow-core: rgba(129, 140, 248, 0.28);
-  --mouse-glow-ring: rgba(14, 165, 233, 0.16);
-  position: fixed;
-  left: 0;
-  top: 0;
-  z-index: 3;
-  width: 360px;
-  height: 360px;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle, var(--mouse-glow-core) 0%, var(--mouse-glow-ring) 34%, transparent 68%);
-  opacity: 0;
-  pointer-events: none;
-  transform: translate3d(50vw, 50vh, 0) translate(-50%, -50%);
-  transition: opacity 220ms ease;
-  will-change: transform, opacity;
-  mix-blend-mode: screen;
-}
-
-:root[data-theme="light"] .mouse-follow-glow {
-  --mouse-glow-core: rgba(99, 102, 241, 0.18);
-  --mouse-glow-ring: rgba(14, 165, 233, 0.10);
-  mix-blend-mode: multiply;
-}
-
-.mouse-follow-glow[data-visible="true"] {
-  opacity: 1;
-}
-
-@media (pointer: coarse), (hover: none), (prefers-reduced-motion: reduce) {
-  .mouse-follow-glow {
-    display: none;
-  }
-}
-
 .inspection-overlay,
 .countdown-overlay,
 .solved-overlay {
