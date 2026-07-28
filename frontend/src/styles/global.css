@@ -1249,68 +1249,38 @@ button {
   color: #0f172a;
 }
 
-.crosshair-cursor-ready,
-.crosshair-cursor-ready a,
-.crosshair-cursor-ready button,
-.crosshair-cursor-ready [role="button"] {
-  cursor: none;
-}
-
-.crosshair-cursor {
-  --crosshair-stroke: rgba(248, 250, 252, 0.62);
-  --crosshair-stroke-width: 1px;
+.mouse-follow-glow {
+  --mouse-glow-core: rgba(129, 140, 248, 0.28);
+  --mouse-glow-ring: rgba(14, 165, 233, 0.16);
   position: fixed;
-  inset: 0;
-  z-index: 12000;
-  pointer-events: none;
-}
-
-:root[data-theme="light"] .crosshair-cursor {
-  --crosshair-stroke: rgba(15, 23, 42, 0.52);
-}
-
-.crosshair-cursor__line {
-  position: fixed;
-  display: block;
-  pointer-events: none;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  width: 360px;
+  height: 360px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, var(--mouse-glow-core) 0%, var(--mouse-glow-ring) 34%, transparent 68%);
   opacity: 0;
-  transition: opacity 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+  transform: translate3d(50vw, 50vh, 0) translate(-50%, -50%);
+  transition: opacity 220ms ease;
   will-change: transform, opacity;
+  mix-blend-mode: screen;
 }
 
-.crosshair-cursor__line[data-visible="true"] {
+:root[data-theme="light"] .mouse-follow-glow {
+  --mouse-glow-core: rgba(99, 102, 241, 0.18);
+  --mouse-glow-ring: rgba(14, 165, 233, 0.10);
+  mix-blend-mode: multiply;
+}
+
+.mouse-follow-glow[data-visible="true"] {
   opacity: 1;
 }
 
-.crosshair-cursor__line--horizontal {
-  top: -10px;
-  left: -10%;
-  width: 120%;
-  height: 20px;
-}
-
-.crosshair-cursor__line--vertical {
-  left: -10px;
-  top: -10%;
-  width: 20px;
-  height: 120%;
-}
-
-.crosshair-cursor__line-element {
-  fill: none;
-  stroke: var(--crosshair-stroke);
-  stroke-width: var(--crosshair-stroke-width);
-}
-
 @media (pointer: coarse), (hover: none), (prefers-reduced-motion: reduce) {
-  .crosshair-cursor-ready,
-  .crosshair-cursor-ready a,
-  .crosshair-cursor-ready button,
-  .crosshair-cursor-ready [role="button"] {
-    cursor: auto;
-  }
-
-  .crosshair-cursor {
+  .mouse-follow-glow {
     display: none;
   }
 }
