@@ -5,7 +5,6 @@ import CompactTimer from "../../components/CompactTimer";
 import OpponentPanel from "../../components/OpponentPanel";
 import KeyboardCheatSheet from "../../components/KeyboardCheatSheet";
 import CountdownOverlay from "../../components/CountdownOverlay";
-import ReadyOverlay from "../../components/ReadyOverlay";
 import InspectionOverlay from "../../components/InspectionOverlay";
 import SolvedOverlay from "../../components/SolvedOverlay";
 import FpsCounter from "../../components/FpsCounter";
@@ -40,7 +39,8 @@ export default function PracticeScreen({
   onOpponentFrame,
   onHome,
   onSettings,
-  effectiveInspectionEnabled,
+  sceneReadyKey,
+  onSceneReady,
 }: {
   stage: PlayableStage;
   mode: GameMode;
@@ -53,11 +53,12 @@ export default function PracticeScreen({
   opponent: RaceOpponentSnapshot | null;
   opponentCube: AnimatedCubeState | null;
   botRaceStats: BotRaceStats;
-  countdownValue: string;
+  countdownValue: string | null;
   onOpponentFrame: (deltaSeconds: number) => void;
   onHome: () => void;
   onSettings: () => void;
-  effectiveInspectionEnabled: boolean;
+  sceneReadyKey: number;
+  onSceneReady: (key: number) => void;
 }) {
   const showFocusOnly = stage === "COUNTDOWN" || stage === "INSPECTION" || stage === "PLAYING" || stage === "SOLVED";
   const isBotRaceMode = mode === "bot-race";
@@ -76,6 +77,8 @@ export default function PracticeScreen({
         cameraMode={settings.cameraMode}
         cubeStyle={settings.cubeStyle}
         reducedMotion={settings.reducedMotion}
+        readinessKey={sceneReadyKey}
+        onSceneReady={onSceneReady}
       />
 
       {settings.showFpsCounter ? <FpsCounter /> : null}
@@ -132,17 +135,8 @@ export default function PracticeScreen({
       </div>
 
       <AnimatePresence>
-        {stage === "COUNTDOWN" ? (
+        {stage === "COUNTDOWN" && countdownValue ? (
           <CountdownOverlay value={countdownValue} />
-        ) : null}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {stage === "READY" ? (
-          <ReadyOverlay
-            inspectionEnabled={effectiveInspectionEnabled}
-            isSpectator={mode === "private" && socketManager.getSnapshot().roomState?.spectator?.clientId === socketManager.getSnapshot().clientId}
-          />
         ) : null}
       </AnimatePresence>
 

@@ -1,6 +1,8 @@
-import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useRef } from "react";
+import { motion } from "framer-motion";
 
 export default function CountdownOverlay({ value }: { value: string }) {
+  const digitRef = useRef<HTMLDivElement>(null);
   const isGo = value === "GO";
   const isRed = value === "3";
   const isOrange = value === "2";
@@ -11,6 +13,27 @@ export default function CountdownOverlay({ value }: { value: string }) {
     : isOrange
     ? "rgba(245,158,11,0.4)"
     : "rgba(16,185,129,0.4)";
+
+  useEffect(() => {
+    const digit = digitRef.current;
+    if (!digit) return;
+
+    const animation = digit.animate(
+      [
+        { opacity: 0, transform: "scale(0.82) translateY(10px)" },
+        { opacity: 1, transform: "scale(1) translateY(0)", offset: 0.24 },
+        { opacity: 1, transform: "scale(1) translateY(0)", offset: 0.72 },
+        { opacity: 0, transform: "scale(1.08) translateY(-8px)" },
+      ],
+      {
+        duration: isGo ? 520 : 780,
+        easing: "cubic-bezier(.22,1,.36,1)",
+        fill: "both",
+      },
+    );
+
+    return () => animation.cancel();
+  }, [isGo, value]);
 
   return (
     <motion.div
@@ -74,18 +97,12 @@ export default function CountdownOverlay({ value }: { value: string }) {
         />
       </div>
 
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={value}
-          className={`countdown-digit ${isGo ? "is-go" : isRed ? "is-red" : isOrange ? "is-orange" : "is-green"}`}
-          initial={{ scale: 0.6, opacity: 0, y: 20 }}
-          animate={{ scale: 1, opacity: 1, y: 0 }}
-          exit={{ scale: 1.2, opacity: 0, y: -16 }}
-          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-        >
-          {value}
-        </motion.div>
-      </AnimatePresence>
+      <div
+        ref={digitRef}
+        className={`countdown-digit ${isGo ? "is-go" : isRed ? "is-red" : isOrange ? "is-orange" : "is-green"}`}
+      >
+        {value}
+      </div>
     </motion.div>
   );
 }

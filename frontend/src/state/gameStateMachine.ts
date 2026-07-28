@@ -139,7 +139,7 @@ export function gameStateReducer(state: GameState, event: GameEvent): GameState 
       return { ...state, stage: "COUNTDOWN", overlay: "NONE" };
 
     case "START_COUNTDOWN":
-      if (state.stage !== "MATCH_LOADING" && state.stage !== "READY") return state;
+      if (state.stage !== "MATCH_LOADING") return state;
       return { ...state, stage: "COUNTDOWN", overlay: "NONE" };
 
     case "COUNTDOWN_COMPLETE":

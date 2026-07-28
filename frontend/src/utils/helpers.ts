@@ -54,11 +54,12 @@ export function buildCloudStatistics(history: SolveRecord[], botStats: BotRaceSt
 }
 
 export function stateLabel(stage: PlayableStage): string {
-  if (stage === "COUNTDOWN") return "READY";
+  if (stage === "COUNTDOWN") return "STARTING";
+  if (stage === "READY") return "SOLVE";
   if (stage === "INSPECTION") return "INSPECT";
   if (stage === "PLAYING") return "SOLVING";
   if (stage === "SOLVED" || stage === "RESULT") return "SOLVED";
-  return "READY";
+  return "SOLVE";
 }
 
 export function connectionLabel(state: SocketConnectionState): string {

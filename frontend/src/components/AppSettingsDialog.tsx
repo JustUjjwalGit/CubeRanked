@@ -1,6 +1,23 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { motion } from "framer-motion";
-import { Keyboard, X, Download, Upload, RotateCcw } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  X,
+  Download,
+  Upload,
+  RotateCcw,
+  Monitor,
+  Camera,
+  Gamepad2,
+  Box,
+  Volume2,
+  Settings,
+  Eye,
+  Keyboard,
+  Sun,
+  Moon,
+  Check,
+  RefreshCw,
+} from "lucide-react";
 import { audioManager } from "../utils/audioManager";
 import {
   DEFAULT_SETTINGS,
@@ -19,22 +36,242 @@ type SettingsCategory =
   | "Cube"
   | "Audio";
 
-const CUBE_STYLES: { key: CubeStyle; label: string; desc: string }[] = [
-  { key: "classic", label: "Classic", desc: "Original Rubik's cube appearance" },
-  { key: "speedcube", label: "Speedcube", desc: "Smaller bevels, brighter plastic, modern GAN/Moyu style" },
-  { key: "stickerless", label: "Stickerless", desc: "Pure plastic colors, no sticker borders" },
-  { key: "minimal", label: "Minimal", desc: "Flat colors, very thin borders, clean esports style" },
+const CUBE_STYLES: { key: CubeStyle; label: string; desc: string; accentColor: string }[] = [
+  { key: "classic", label: "Classic", desc: "Original Rubik's Cube look with traditional sticker borders", accentColor: "#6366f1" },
+  { key: "speedcube", label: "Speedcube", desc: "Modern GAN/Moyu style — smaller bevels, brighter plastic", accentColor: "#06b6d4" },
+  { key: "stickerless", label: "Stickerless", desc: "Pure plastic colors without sticker borders", accentColor: "#10b981" },
+  { key: "minimal", label: "Minimal", desc: "Flat colors, very thin borders — clean esports aesthetic", accentColor: "#8b5cf6" },
 ];
 
-const CAMERA_FACES: { key: CameraFace; label: string }[] = [
-  { key: "white", label: "White" },
-  { key: "yellow", label: "Yellow" },
-  { key: "green", label: "Green" },
-  { key: "blue", label: "Blue" },
-  { key: "red", label: "Red" },
-  { key: "orange", label: "Orange" },
+const CAMERA_FACES: { key: CameraFace; label: string; color: string }[] = [
+  { key: "white", label: "White", color: "#f8fafc" },
+  { key: "yellow", label: "Yellow", color: "#facc15" },
+  { key: "green", label: "Green", color: "#22c55e" },
+  { key: "blue", label: "Blue", color: "#3b82f6" },
+  { key: "red", label: "Red", color: "#ef4444" },
+  { key: "orange", label: "Orange", color: "#f97316" },
 ];
 
+const CAMERA_MODES: {
+  key: SessionSettings["cameraMode"];
+  label: string;
+  desc: string;
+  icon: React.ReactNode;
+}[] = [
+  {
+    key: "free-rotation",
+    label: "Free Orbit",
+    desc: "Drag to orbit the camera around the cube. Face buttons snap to view.",
+    icon: <Camera size={18} />,
+  },
+  {
+    key: "competitive",
+    label: "Competitive",
+    desc: "Fixed camera. Use face buttons or number keys to switch views.",
+    icon: <Monitor size={18} />,
+  },
+];
+
+const CATEGORY_ICONS: Record<SettingsCategory, React.ReactNode> = {
+  General: <Settings size={15} />,
+  Appearance: <Eye size={15} />,
+  Camera: <Camera size={15} />,
+  Controls: <Keyboard size={15} />,
+  Cube: <Box size={15} />,
+  Audio: <Volume2 size={15} />,
+};
+
+// ─── Premium Toggle Switch ───────────────────────────────────────────────────
+function PremiumSwitch({
+  checked,
+  onChange,
+  id,
+}: {
+  checked: boolean;
+  onChange: (val: boolean) => void;
+  id?: string;
+}) {
+  return (
+    <button
+      id={id}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      className={`premium-switch ${checked ? "is-on" : "is-off"}`}
+      onClick={() => onChange(!checked)}
+    >
+      <motion.div
+        className="premium-switch-thumb"
+        layout
+        transition={{ type: "spring", stiffness: 600, damping: 34 }}
+      />
+    </button>
+  );
+}
+
+// ─── Premium Slider ──────────────────────────────────────────────────────────
+function PremiumSlider({
+  min,
+  max,
+  step,
+  value,
+  onChange,
+  label,
+  formatValue,
+  id,
+}: {
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  onChange: (val: number) => void;
+  label: string;
+  formatValue?: (val: number) => string;
+  id?: string;
+}) {
+  const pct = ((value - min) / (max - min)) * 100;
+  const displayVal = formatValue ? formatValue(value) : String(value);
+
+  return (
+    <div className="premium-slider-row">
+      <div className="premium-slider-header">
+        <span className="premium-slider-label">{label}</span>
+        <span className="premium-slider-value">{displayVal}</span>
+      </div>
+      <div className="premium-slider-track">
+        <div className="premium-slider-fill" style={{ width: `${pct}%` }} />
+        <input
+          id={id}
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="premium-slider-input"
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── UI Scale Slider — premium redesign with tick marks ──────────────────────
+const UI_SCALE_TICKS = [0.8, 0.9, 1.0, 1.1, 1.2];
+const UI_SCALE_LABELS: Record<number, string> = { 0.8: "80%", 0.9: "90%", 1.0: "100%", 1.1: "110%", 1.2: "120%" };
+
+function UiScaleSlider({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (val: number) => void;
+}) {
+  const min = 0.8;
+  const max = 1.2;
+  const pct = ((value - min) / (max - min)) * 100;
+  const displayLabel = UI_SCALE_LABELS[Math.round(value * 10) / 10] ?? `${Math.round(value * 100)}%`;
+
+  return (
+    <div className="ui-scale-slider">
+      <div className="ui-scale-header">
+        <div className="ui-scale-title">
+          <span className="premium-slider-label">UI Scale</span>
+          <span className="ui-scale-badge">{displayLabel}</span>
+        </div>
+        {value !== 1.0 && (
+          <button
+            type="button"
+            className="ui-scale-reset"
+            onClick={() => onChange(1.0)}
+            title="Reset to 100%"
+            aria-label="Reset UI scale to 100%"
+          >
+            <RefreshCw size={11} />
+            Reset
+          </button>
+        )}
+      </div>
+
+      {/* Track + thumb */}
+      <div className="ui-scale-track-wrap">
+        <div className="ui-scale-track">
+          <div className="ui-scale-fill" style={{ width: `${pct}%` }} />
+        </div>
+        <input
+          id="slider-ui-scale"
+          type="range"
+          min={min}
+          max={max}
+          step={0.1}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="ui-scale-input"
+          aria-label="UI Scale"
+        />
+        {/* Tick marks */}
+        <div className="ui-scale-ticks">
+          {UI_SCALE_TICKS.map((tick) => {
+            const tickPct = ((tick - min) / (max - min)) * 100;
+            const isActive = Math.abs(value - tick) < 0.05;
+            return (
+              <button
+                key={tick}
+                type="button"
+                className={`ui-scale-tick ${isActive ? "active" : ""}`}
+                style={{ left: `${tickPct}%` }}
+                onClick={() => onChange(tick)}
+                aria-label={`Set UI scale to ${UI_SCALE_LABELS[tick]}`}
+              >
+                <span className="ui-scale-tick-mark" />
+                <span className="ui-scale-tick-label">{UI_SCALE_LABELS[tick]}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Mini Cube Preview (Static Image) ───────────────────────────────
+function MiniCubePreview({ cubeStyle }: { cubeStyle: CubeStyle }) {
+  const imageUrl = `/assets/cube-styles/${cubeStyle}.webp`;
+  const label = CUBE_STYLES.find((style) => style.key === cubeStyle)?.label ?? cubeStyle;
+
+  return (
+    <div className="sd2-cube-preview-3d">
+      <img
+        src={imageUrl}
+        alt={`${label} CubeRanked cube style preview`}
+        width={512}
+        height={512}
+        loading="lazy"
+      />
+    </div>
+  );
+}
+
+// ─── Save Confirmation ───────────────────────────────────────────────────────
+function SavedBadge({ show }: { show: boolean }) {
+  return (
+    <AnimatePresence>
+      {show && (
+        <motion.div
+          className="saved-badge"
+          initial={{ opacity: 0, scale: 0.82, y: 4 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.9, y: -2 }}
+          transition={{ type: "spring", stiffness: 400, damping: 26 }}
+        >
+          <Check size={11} />
+          Saved
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// ─── Main Settings Dialog ────────────────────────────────────────────────────
 export default function AppSettingsDialog({
   category,
   settings,
@@ -51,7 +288,21 @@ export default function AppSettingsDialog({
   const categories: SettingsCategory[] = ["General", "Appearance", "Camera", "Controls", "Cube", "Audio"];
   const [listeningFace, setListeningFace] = useState<Face | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [savedVisible, setSavedVisible] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const savedTimerRef = useRef<number | null>(null);
+  const isFirstRender = useRef(true);
+
+  // Show "Saved" badge whenever settings change (but not on first render)
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    setSavedVisible(true);
+    if (savedTimerRef.current !== null) clearTimeout(savedTimerRef.current);
+    savedTimerRef.current = window.setTimeout(() => setSavedVisible(false), 1600);
+  }, [settings]);
 
   useEffect(() => {
     if (!listeningFace) return;
@@ -115,284 +366,450 @@ export default function AppSettingsDialog({
       exit={{ opacity: 0, transition: { duration: 0.08 } }}
     >
       <motion.section
-        className="settings-dialog"
+        className="settings-dialog settings-dialog-v2"
         initial={{ y: 24, opacity: 0, scale: 0.97 }}
         animate={{ y: 0, opacity: 1, scale: 1 }}
         exit={{ y: 24, opacity: 0, scale: 0.97 }}
         transition={{ type: "spring", stiffness: 170, damping: 20 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="modal-head">
-          <div>
-            <span>Application</span>
-            <h2>Settings</h2>
+        {/* ── Header ── */}
+        <div className="sd2-header">
+          <div className="sd2-header-left">
+            <div className="sd2-header-icon">
+              <Settings size={16} />
+            </div>
+            <div>
+              <p className="sd2-header-eyebrow">Application</p>
+              <h2 className="sd2-header-title">Settings</h2>
+            </div>
           </div>
-          <button type="button" onClick={() => { audioManager.playButtonClick(); onClose(); }} aria-label="Close settings">
-            <X size={18} aria-hidden="true" />
-          </button>
+          <div className="sd2-header-right">
+            <SavedBadge show={savedVisible} />
+            <button
+              type="button"
+              className="sd2-close-btn"
+              onClick={() => { audioManager.playButtonClick(); onClose(); }}
+              aria-label="Close settings"
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
-        <div className="settings-layout">
-          <nav className="settings-tabs">
+        {/* ── Body ── */}
+        <div className="sd2-body">
+          {/* ── Sidebar nav ── */}
+          <nav className="sd2-nav">
             {categories.map((item) => (
               <button
-                type="button"
                 key={item}
-                className={category === item ? "selected" : ""}
+                type="button"
+                className={`sd2-nav-item ${category === item ? "active" : ""}`}
                 onClick={() => { audioManager.playButtonHover(); onCategory(item); }}
               >
-                {item}
+                <span className="sd2-nav-icon">{CATEGORY_ICONS[item]}</span>
+                <span className="sd2-nav-label">{item}</span>
               </button>
             ))}
           </nav>
-          <div className="settings-content">
-            <h3>{category}</h3>
 
-            {category === "General" && (
-              <div className="settings-scroll">
-                <div className="settings-section">
-                  <h4>Default Camera Face</h4>
-                  <p className="settings-hint">Determines initial camera orientation and first visible face when entering Practice, Bot Race, or Ranked.</p>
-                  <div className="settings-chip-group">
-                    {CAMERA_FACES.map((f) => (
-                      <button
-                        key={f.key}
-                        type="button"
-                        className={`settings-chip ${settings.defaultCameraFace === f.key ? "active" : ""}`}
-                        onClick={() => onSettings({ defaultCameraFace: f.key })}
-                      >
-                        {f.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+          {/* ── Content panel ── */}
+          <div className="sd2-content">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={category}
+                className="sd2-panel"
+                initial={{ opacity: 0, x: 8 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -8 }}
+                transition={{ duration: 0.16 }}
+              >
+                <h3 className="sd2-panel-title">{category}</h3>
 
-                <div className="settings-section">
-                  <h4>HUD</h4>
-                  <label className="switch-row compact">
-                    <span>Show FPS Counter</span>
-                    <input type="checkbox" checked={settings.showFpsCounter} onChange={(e) => onSettings({ showFpsCounter: e.target.checked })} />
-                  </label>
-                </div>
-              </div>
-            )}
-
-            {category === "Appearance" && (
-              <div className="settings-scroll">
-                <div className="settings-section">
-                  <h4>Theme</h4>
-                  <div className="theme-toggle-container" style={{ marginTop: "8px" }}>
-                    <button
-                      className={`premium-theme-toggle ${settings.theme === "dark" ? "is-dark" : "is-light"}`}
-                      onClick={() => { audioManager.playThemeSwitch(); onSettings({ theme: settings.theme === "dark" ? "light" : "dark" }); }}
-                      aria-label="Toggle theme"
-                    >
-                      <motion.div className="theme-toggle-orb" layout transition={{ type: "spring", stiffness: 500, damping: 30 }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="theme-icon-dark">
-                          <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
-                        </svg>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="theme-icon-light">
-                          <circle cx="12" cy="12" r="5" /><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-                        </svg>
-                      </motion.div>
-                      <div className="theme-toggle-bg" />
-                    </button>
-                    <span className="theme-label">{settings.theme === "dark" ? "Dark Mode" : "Light Mode"}</span>
-                  </div>
-                </div>
-
-                <div className="settings-section">
-                  <h4>Display</h4>
-                  <label className="range-row compact">
-                    <span>UI Scale ({Math.round(settings.uiScale * 100)}%)</span>
-                    <input type="range" min="0.8" max="1.2" step="0.05" value={settings.uiScale} onChange={(e) => onSettings({ uiScale: Number(e.target.value) })} />
-                  </label>
-                  <label className="switch-row compact">
-                    <span>Reduced Motion</span>
-                    <input type="checkbox" checked={settings.reducedMotion} onChange={(e) => onSettings({ reducedMotion: e.target.checked })} />
-                  </label>
-                </div>
-              </div>
-            )}
-
-            {category === "Camera" && (
-              <div className="settings-scroll">
-                <div className="settings-section">
-                  <h4>Camera Mode</h4>
-                  <div className="settings-chip-group">
-                    <button
-                      type="button"
-                      className={`settings-chip ${settings.cameraMode === "free-rotation" ? "active" : ""}`}
-                      onClick={() => onSettings({ cameraMode: "free-rotation" })}
-                    >
-                      Free Rotation
-                    </button>
-                    <button
-                      type="button"
-                      className={`settings-chip ${settings.cameraMode === "competitive" ? "active" : ""}`}
-                      onClick={() => onSettings({ cameraMode: "competitive" })}
-                    >
-                      Competitive
-                    </button>
-                  </div>
-                  <p className="settings-hint">
-                    {settings.cameraMode === "competitive"
-                      ? "Fixed camera. Use face buttons or number keys to switch views."
-                      : "Drag to rotate the cube freely. Face buttons snap to canonical orientation."}
-                  </p>
-                </div>
-
-                <div className="settings-section">
-                  <label className="switch-row compact">
-                    <span>Invert Vertical Rotation</span>
-                    <input type="checkbox" checked={settings.cameraInvertVertical} onChange={(e) => onSettings({ cameraInvertVertical: e.target.checked })} />
-                  </label>
-                </div>
-
-                <div className="settings-section">
-                  <label className="range-row compact">
-                    <span>Mouse Sensitivity ({settings.cameraSensitivity.toFixed(1)}x)</span>
-                    <input type="range" min="0.1" max="3.0" step="0.1" value={settings.cameraSensitivity} onChange={(e) => onSettings({ cameraSensitivity: Number(e.target.value) })} />
-                  </label>
-                </div>
-
-                <div className="settings-section">
-                  <label className="range-row compact">
-                    <span>Zoom Speed ({settings.cameraZoomSpeed.toFixed(1)}x)</span>
-                    <input type="range" min="0.1" max="3.0" step="0.1" value={settings.cameraZoomSpeed} onChange={(e) => onSettings({ cameraZoomSpeed: Number(e.target.value) })} />
-                  </label>
-                </div>
-              </div>
-            )}
-
-            {category === "Controls" && (
-              <div className="settings-scroll">
-                <div className="settings-section">
-                  <h4>Shift Modifier</h4>
-                  <p className="settings-hint">
-                    Hold <kbd>Shift</kbd> + a move key to perform the inverse (counter-clockwise) rotation.
-                  </p>
-                  <div className="settings-examples">
-                    <span><kbd>R</kbd> → Clockwise</span>
-                    <span><kbd>Shift</kbd> + <kbd>R</kbd> → Counter Clockwise</span>
-                  </div>
-                </div>
-
-                <div className="settings-section">
-                  <h4>Camera Shortcuts</h4>
-                  <div className="settings-examples">
-                    <span><kbd>1</kbd> Front</span>
-                    <span><kbd>2</kbd> Right</span>
-                    <span><kbd>3</kbd> Back</span>
-                    <span><kbd>4</kbd> Left</span>
-                    <span><kbd>5</kbd> Top</span>
-                    <span><kbd>6</kbd> Bottom</span>
-                  </div>
-                </div>
-
-                <div className="settings-section">
-                  <label className="switch-row compact">
-                    <span>Show Keyboard Cheat Sheet</span>
-                    <input type="checkbox" checked={settings.showKeyboardCheatSheet} onChange={(e) => onSettings({ showKeyboardCheatSheet: e.target.checked })} />
-                  </label>
-                </div>
-
-                <div className="settings-section">
-                  <h4>Keyboard Rebinds</h4>
-                  <div className="rebinds-grid">
-                    {(["U", "R", "F", "D", "L", "B"] as Face[]).map((face) => {
-                      const label = { U: "Up (U)", R: "Right (R)", F: "Front (F)", D: "Down (D)", L: "Left (L)", B: "Back (B)" }[face];
-                      const boundKey = (settings.keybindings || DEFAULT_SETTINGS.keybindings)[face];
-                      return (
-                        <div key={face} className="rebind-row">
-                          <span>{label}</span>
+                {/* ════ GENERAL ════ */}
+                {category === "General" && (
+                  <div className="sd2-scroll">
+                    <div className="sd2-card">
+                      <div className="sd2-card-header">
+                        <span className="sd2-card-title">Default Camera Face</span>
+                        <span className="sd2-card-desc">The first visible face when entering a solve</span>
+                      </div>
+                      <div className="sd2-face-grid">
+                        {CAMERA_FACES.map((f) => (
                           <button
+                            key={f.key}
                             type="button"
-                            className={`rebind-key-btn ${listeningFace === face ? "listening" : ""}`}
-                            onClick={() => setListeningFace(face)}
+                            className={`sd2-face-chip ${settings.defaultCameraFace === f.key ? "active" : ""}`}
+                            onClick={() => onSettings({ defaultCameraFace: f.key })}
                           >
-                            {listeningFace === face ? "Press key..." : boundKey}
+                            <span
+                              className="sd2-face-dot"
+                              style={{ background: f.color }}
+                            />
+                            {f.label}
                           </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="sd2-card">
+                      <div className="sd2-card-header">
+                        <span className="sd2-card-title">HUD</span>
+                      </div>
+                      <div className="sd2-row">
+                        <div className="sd2-row-info">
+                          <span className="sd2-row-label">FPS Counter</span>
+                          <span className="sd2-row-desc">Show frames per second overlay</span>
                         </div>
-                      );
-                    })}
+                        <PremiumSwitch
+                          checked={settings.showFpsCounter}
+                          onChange={(v) => onSettings({ showFpsCounter: v })}
+                          id="toggle-fps"
+                        />
+                      </div>
+                    </div>
                   </div>
-                  {listeningFace && (
-                    <p className="settings-hint" style={{ marginTop: "8px" }}>
-                      Press any key to bind, or <kbd>ESC</kbd> to cancel
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
+                )}
 
-            {category === "Cube" && (
-              <div className="settings-scroll">
-                <div className="settings-section">
-                  <h4>Cube Style</h4>
-                  <div className="settings-chip-group">
-                    {CUBE_STYLES.map((s) => (
-                      <button
-                        key={s.key}
-                        type="button"
-                        className={`settings-chip ${settings.cubeStyle === s.key ? "active" : ""}`}
-                        onClick={() => onSettings({ cubeStyle: s.key })}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
+                {/* ════ APPEARANCE ════ */}
+                {category === "Appearance" && (
+                  <div className="sd2-scroll">
+                    <div className="sd2-card">
+                      <div className="sd2-card-header">
+                        <span className="sd2-card-title">Theme</span>
+                        <span className="sd2-card-desc">Interface color scheme</span>
+                      </div>
+                      <div className="sd2-theme-row">
+                        <button
+                          className={`sd2-theme-option ${settings.theme === "dark" ? "active" : ""}`}
+                          onClick={() => { audioManager.playThemeSwitch(); onSettings({ theme: "dark" }); }}
+                          type="button"
+                        >
+                          <div className="sd2-theme-preview sd2-theme-dark">
+                            <div className="sd2-theme-preview-dot" />
+                            <div className="sd2-theme-preview-bar" />
+                            <div className="sd2-theme-preview-bar short" />
+                          </div>
+                          <Moon size={13} />
+                          <span>Dark</span>
+                          {settings.theme === "dark" && <Check size={11} className="sd2-theme-check" />}
+                        </button>
+                        <button
+                          className={`sd2-theme-option ${settings.theme === "light" ? "active" : ""}`}
+                          onClick={() => { audioManager.playThemeSwitch(); onSettings({ theme: "light" }); }}
+                          type="button"
+                        >
+                          <div className="sd2-theme-preview sd2-theme-light">
+                            <div className="sd2-theme-preview-dot" />
+                            <div className="sd2-theme-preview-bar" />
+                            <div className="sd2-theme-preview-bar short" />
+                          </div>
+                          <Sun size={13} />
+                          <span>Light</span>
+                          {settings.theme === "light" && <Check size={11} className="sd2-theme-check" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="sd2-card">
+                      <div className="sd2-card-header">
+                        <span className="sd2-card-title">Display</span>
+                      </div>
+                      <UiScaleSlider
+                        value={settings.uiScale}
+                        onChange={(v) => onSettings({ uiScale: v })}
+                      />
+                      <div className="sd2-row" style={{ marginTop: "12px" }}>
+                        <div className="sd2-row-info">
+                          <span className="sd2-row-label">Reduced Motion</span>
+                          <span className="sd2-row-desc">Minimize animations for accessibility</span>
+                        </div>
+                        <PremiumSwitch
+                          checked={settings.reducedMotion}
+                          onChange={(v) => onSettings({ reducedMotion: v })}
+                          id="toggle-reduced-motion"
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <p className="settings-hint">
-                    {CUBE_STYLES.find(s => s.key === settings.cubeStyle)?.desc}
-                  </p>
-                </div>
+                )}
 
-                <div className="settings-section">
-                  <label className="range-row compact">
-                    <span>Animation Speed ({settings.animationSpeed.toFixed(2)}s)</span>
-                    <input type="range" min="0.1" max="0.45" step="0.01" value={settings.animationSpeed} onChange={(e) => onSettings({ animationSpeed: Number(e.target.value) })} />
-                  </label>
-                </div>
-              </div>
-            )}
+                {/* ════ CAMERA ════ */}
+                {category === "Camera" && (
+                  <div className="sd2-scroll">
+                    <div className="sd2-card">
+                      <div className="sd2-card-header">
+                        <span className="sd2-card-title">Camera Mode</span>
+                        <span className="sd2-card-desc">How you interact with the cube</span>
+                      </div>
+                      <div className="sd2-camera-cards">
+                        {CAMERA_MODES.map((m) => (
+                          <button
+                            key={m.key}
+                            type="button"
+                            className={`sd2-camera-card ${settings.cameraMode === m.key ? "active" : ""}`}
+                            onClick={() => onSettings({ cameraMode: m.key })}
+                          >
+                            <div className="sd2-camera-card-icon">{m.icon}</div>
+                            <div className="sd2-camera-card-body">
+                              <span className="sd2-camera-card-label">{m.label}</span>
+                              <span className="sd2-camera-card-desc">{m.desc}</span>
+                            </div>
+                            {settings.cameraMode === m.key && (
+                              <div className="sd2-camera-card-check">
+                                <Check size={12} />
+                              </div>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
 
-            {category === "Audio" && (
-              <div className="settings-scroll">
-                <div className="settings-section">
-                  <label className="range-row compact">
-                    <span>Master Volume ({Math.round(settings.audio.masterVolume * 100)}%)</span>
-                    <input type="range" min="0" max="1" step="0.05" value={settings.audio.masterVolume} onChange={(e) => setAudio({ masterVolume: Number(e.target.value) })} />
-                  </label>
-                </div>
-                <div className="settings-section">
-                  <label className="range-row compact">
-                    <span>SFX Volume ({Math.round(settings.audio.sfxVolume * 100)}%)</span>
-                    <input type="range" min="0" max="1" step="0.05" value={settings.audio.sfxVolume} onChange={(e) => setAudio({ sfxVolume: Number(e.target.value) })} />
-                  </label>
-                </div>
-                <div className="settings-section">
-                  <label className="range-row compact">
-                    <span>UI Volume ({Math.round(settings.audio.uiVolume * 100)}%)</span>
-                    <input type="range" min="0" max="1" step="0.05" value={settings.audio.uiVolume} onChange={(e) => setAudio({ uiVolume: Number(e.target.value) })} />
-                  </label>
-                </div>
-                <div className="settings-section">
-                  <label className="range-row compact">
-                    <span>Notification Volume ({Math.round(settings.audio.notificationVolume * 100)}%)</span>
-                    <input type="range" min="0" max="1" step="0.05" value={settings.audio.notificationVolume} onChange={(e) => setAudio({ notificationVolume: Number(e.target.value) })} />
-                  </label>
-                </div>
-                <div className="settings-section">
-                  <label className="range-row compact">
-                    <span>Music Volume ({Math.round(settings.audio.musicVolume * 100)}%)</span>
-                    <input type="range" min="0" max="1" step="0.05" value={settings.audio.musicVolume} onChange={(e) => setAudio({ musicVolume: Number(e.target.value) })} />
-                  </label>
-                  <p className="settings-hint">Controls the volume of the background music track.</p>
-                </div>
-              </div>
-            )}
+                    <div className="sd2-card">
+                      <div className="sd2-card-header">
+                        <span className="sd2-card-title">Mouse Settings</span>
+                      </div>
+                      <div className="sd2-row">
+                        <div className="sd2-row-info">
+                          <span className="sd2-row-label">Invert Vertical Rotation</span>
+                          <span className="sd2-row-desc">Flip up/down camera drag direction</span>
+                        </div>
+                        <PremiumSwitch
+                          checked={settings.cameraInvertVertical}
+                          onChange={(v) => onSettings({ cameraInvertVertical: v })}
+                          id="toggle-invert-vertical"
+                        />
+                      </div>
+                      <div style={{ marginTop: "16px" }}>
+                        <PremiumSlider
+                          id="slider-sensitivity"
+                          label="Mouse Sensitivity"
+                          min={0.1}
+                          max={3.0}
+                          step={0.1}
+                          value={settings.cameraSensitivity}
+                          onChange={(v) => onSettings({ cameraSensitivity: v })}
+                          formatValue={(v) => `${v.toFixed(1)}×`}
+                        />
+                      </div>
+                      <div style={{ marginTop: "12px" }}>
+                        <PremiumSlider
+                          id="slider-zoom-speed"
+                          label="Zoom Speed"
+                          min={0.1}
+                          max={3.0}
+                          step={0.1}
+                          value={settings.cameraZoomSpeed}
+                          onChange={(v) => onSettings({ cameraZoomSpeed: v })}
+                          formatValue={(v) => `${v.toFixed(1)}×`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
 
-            <div className="settings-qol-row">
+                {/* ════ CONTROLS ════ */}
+                {category === "Controls" && (
+                  <div className="sd2-scroll">
+                    <div className="sd2-card">
+                      <div className="sd2-card-header">
+                        <span className="sd2-card-title">Shift Modifier</span>
+                        <span className="sd2-card-desc">
+                          Hold <kbd>Shift</kbd> + a move key for counter-clockwise rotation
+                        </span>
+                      </div>
+                      <div className="sd2-examples">
+                        <div className="sd2-example-chip"><kbd>R</kbd> <span>→ Clockwise</span></div>
+                        <div className="sd2-example-chip"><kbd>Shift</kbd> + <kbd>R</kbd> <span>→ Counter-clockwise</span></div>
+                      </div>
+                    </div>
+
+                    <div className="sd2-card">
+                      <div className="sd2-card-header">
+                        <span className="sd2-card-title">Camera Shortcuts</span>
+                      </div>
+                      <div className="sd2-shortcut-grid">
+                        {[
+                          { key: "1", label: "Front" },
+                          { key: "2", label: "Right" },
+                          { key: "3", label: "Back" },
+                          { key: "4", label: "Left" },
+                          { key: "5", label: "Top" },
+                          { key: "6", label: "Bottom" },
+                        ].map(({ key, label }) => (
+                          <div key={key} className="sd2-shortcut-item">
+                            <kbd>{key}</kbd>
+                            <span>{label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="sd2-card">
+                      <div className="sd2-card-header">
+                        <span className="sd2-card-title">HUD Options</span>
+                      </div>
+                      <div className="sd2-row">
+                        <div className="sd2-row-info">
+                          <span className="sd2-row-label">Keyboard Cheat Sheet</span>
+                          <span className="sd2-row-desc">Show move key bindings in-game</span>
+                        </div>
+                        <PremiumSwitch
+                          checked={settings.showKeyboardCheatSheet}
+                          onChange={(v) => onSettings({ showKeyboardCheatSheet: v })}
+                          id="toggle-cheatsheet"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="sd2-card">
+                      <div className="sd2-card-header">
+                        <span className="sd2-card-title">Keyboard Rebinds</span>
+                        <span className="sd2-card-desc">Click a key to reassign it</span>
+                      </div>
+                      <div className="sd2-rebind-grid">
+                        {(["U", "R", "F", "D", "L", "B"] as Face[]).map((face) => {
+                          const label = { U: "Up", R: "Right", F: "Front", D: "Down", L: "Left", B: "Back" }[face];
+                          const boundKey = (settings.keybindings || DEFAULT_SETTINGS.keybindings)[face];
+                          return (
+                            <div key={face} className="sd2-rebind-row">
+                              <span className="sd2-rebind-face">{label}</span>
+                              <button
+                                type="button"
+                                className={`sd2-rebind-btn ${listeningFace === face ? "listening" : ""}`}
+                                onClick={() => setListeningFace(face)}
+                              >
+                                {listeningFace === face ? "Press key…" : <kbd>{boundKey}</kbd>}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {listeningFace && (
+                        <p className="sd2-hint" style={{ marginTop: "10px" }}>
+                          Press any key to bind, or <kbd>ESC</kbd> to cancel
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* ════ CUBE ════ */}
+                {category === "Cube" && (
+                  <div className="sd2-scroll">
+                    <div className="sd2-card">
+                      <div className="sd2-card-header">
+                        <span className="sd2-card-title">Cube Style</span>
+                        <span className="sd2-card-desc">Visual appearance of the cube</span>
+                      </div>
+                      <div className="sd2-cube-style-grid">
+                        {CUBE_STYLES.map((s) => (
+                          <button
+                            key={s.key}
+                            type="button"
+                            className={`sd2-cube-style-card ${settings.cubeStyle === s.key ? "active" : ""}`}
+                            onClick={() => onSettings({ cubeStyle: s.key })}
+                          >
+                            <MiniCubePreview cubeStyle={s.key} />
+                            <span className="sd2-cube-style-label">{s.label}</span>
+                            <span className="sd2-cube-style-desc">{s.desc}</span>
+                            {settings.cubeStyle === s.key && (
+                              <div className="sd2-cube-style-check">
+                                <Check size={11} />
+                              </div>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="sd2-card">
+                      <div className="sd2-card-header">
+                        <span className="sd2-card-title">Animation</span>
+                      </div>
+                      <PremiumSlider
+                        id="slider-animation-speed"
+                        label="Turn Animation Speed"
+                        min={0.1}
+                        max={0.45}
+                        step={0.01}
+                        value={settings.animationSpeed}
+                        onChange={(v) => onSettings({ animationSpeed: v })}
+                        formatValue={(v) => `${(v * 1000).toFixed(0)} ms`}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* ════ AUDIO ════ */}
+                {category === "Audio" && (
+                  <div className="sd2-scroll">
+                    <div className="sd2-card">
+                      <div className="sd2-card-header">
+                        <span className="sd2-card-title">Volume Levels</span>
+                        <span className="sd2-card-desc">Adjust audio for each sound category</span>
+                      </div>
+                      <div className="sd2-audio-stack">
+                        <PremiumSlider
+                          id="slider-master-vol"
+                          label="Master Volume"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={settings.audio.masterVolume}
+                          onChange={(v) => setAudio({ masterVolume: v })}
+                          formatValue={(v) => `${Math.round(v * 100)}%`}
+                        />
+                        <PremiumSlider
+                          id="slider-sfx-vol"
+                          label="Sound Effects"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={settings.audio.sfxVolume}
+                          onChange={(v) => setAudio({ sfxVolume: v })}
+                          formatValue={(v) => `${Math.round(v * 100)}%`}
+                        />
+                        <PremiumSlider
+                          id="slider-ui-vol"
+                          label="UI Sounds"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={settings.audio.uiVolume}
+                          onChange={(v) => setAudio({ uiVolume: v })}
+                          formatValue={(v) => `${Math.round(v * 100)}%`}
+                        />
+                        <PremiumSlider
+                          id="slider-notif-vol"
+                          label="Notifications"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={settings.audio.notificationVolume}
+                          onChange={(v) => setAudio({ notificationVolume: v })}
+                          formatValue={(v) => `${Math.round(v * 100)}%`}
+                        />
+                        <PremiumSlider
+                          id="slider-music-vol"
+                          label="Music"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={settings.audio.musicVolume}
+                          onChange={(v) => setAudio({ musicVolume: v })}
+                          formatValue={(v) => `${Math.round(v * 100)}%`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            </AnimatePresence>
+
+            {/* ── Footer action row ── */}
+            <div className="sd2-footer">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -400,16 +817,16 @@ export default function AppSettingsDialog({
                 style={{ display: "none" }}
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImport(f); }}
               />
-              <button type="button" className="settings-qol-btn" onClick={() => fileInputRef.current?.click()}>
-                <Upload size={14} /> Import
+              <button type="button" className="sd2-footer-btn" onClick={() => fileInputRef.current?.click()}>
+                <Upload size={13} /> Import
               </button>
-              <button type="button" className="settings-qol-btn" onClick={handleExport}>
-                <Download size={14} /> Export
+              <button type="button" className="sd2-footer-btn" onClick={handleExport}>
+                <Download size={13} /> Export
               </button>
-              <button type="button" className="settings-qol-btn danger" onClick={handleRestoreDefaults}>
-                <RotateCcw size={14} /> Defaults
+              <button type="button" className="sd2-footer-btn danger" onClick={handleRestoreDefaults}>
+                <RotateCcw size={13} /> Restore Defaults
               </button>
-              {importError && <span className="settings-qol-error">{importError}</span>}
+              {importError && <span className="sd2-footer-error">{importError}</span>}
             </div>
           </div>
         </div>

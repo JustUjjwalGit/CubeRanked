@@ -55,24 +55,31 @@ interface CubeSceneProps {
   showVisuals?: boolean;
   cubeStyle?: CubeStyle;
   reducedMotion?: boolean;
+  initialFace?: Face;
+  readinessKey?: number;
+  onSceneReady?: (key: number) => void;
+  cameraPositionOverride?: [number, number, number];
+  backgroundOverride?: string;
 }
 
+// Canonical orthogonal camera positions — each face points squarely at the camera.
+// F=Green (+Z), R=Red (+X), L=Orange (-X), B=Blue (-Z), U=White (+Y), D=Yellow (-Y)
 const FACE_CAMERA_POSITIONS: Record<Face, [number, number, number]> = {
-  F: [5.6, 4.4, 6.2],
-  R: [6.2, 4.4, -5.6],
-  L: [-6.2, 4.4, 5.6],
-  B: [-5.6, 4.4, -6.2],
-  U: [5.6, 6.2, -4.4],
-  D: [5.6, -6.2, 4.4],
+  F: [0, 0, 9.2],   // Green face: camera on +Z axis, looking at origin
+  R: [9.2, 0, 0],   // Red face:   camera on +X axis
+  L: [-9.2, 0, 0],  // Orange face: camera on -X axis
+  B: [0, 0, -9.2],  // Blue face:  camera on -Z axis
+  U: [0, 9.2, 0],   // White face: camera on +Y axis
+  D: [0, -9.2, 0],  // Yellow face: camera on -Y axis
 };
 
 const FACE_CAMERA_POSITIONS_COMPACT: Record<Face, [number, number, number]> = {
-  F: [4.8, 3.7, 5.2],
-  R: [5.2, 3.7, -4.8],
-  L: [-5.2, 3.7, 4.8],
-  B: [-4.8, 3.7, -5.2],
-  U: [4.8, 5.2, -3.7],
-  D: [4.8, -5.2, 3.7],
+  F: [0, 0, 7.8],
+  R: [7.8, 0, 0],
+  L: [-7.8, 0, 0],
+  B: [0, 0, -7.8],
+  U: [0, 7.8, 0],
+  D: [0, -7.8, 0],
 };
 
 const FACE_NORMALS_ARRAY: Array<{ face: Face; normal: THREE.Vector3 }> = [
@@ -114,13 +121,20 @@ export default function CubeScene({
   showVisuals = false,
   cubeStyle = "classic",
   reducedMotion = false,
+  initialFace,
+  readinessKey = 0,
+  onSceneReady,
+  cameraPositionOverride,
+  backgroundOverride,
 }: CubeSceneProps) {
-  const background = theme === "dark" ? "#070b12" : "#eef2f7";
+  const background = backgroundOverride ?? (theme === "dark" ? "#070b12" : "#eef2f7");
   const currentViewFace = useCubeStore((state) => state.currentViewFace);
   const setViewFace = useCubeStore((state) => state.setViewFace);
-  const cameraPosition: [number, number, number] = compact
-    ? [4.8, 3.7, 5.2]
-    : [5.6, 4.4, 6.2];
+
+  // Derive initial camera from initialFace or default to F
+  const initFace: Face = initialFace ?? "F";
+  const initPositions = compact ? FACE_CAMERA_POSITIONS_COMPACT : FACE_CAMERA_POSITIONS;
+  const cameraPosition: [number, number, number] = cameraPositionOverride ?? initPositions[initFace];
   const cameraFov = compact ? 42 : 38;
 
   const viewButtons: Array<{ face: Face; color: string; label: string; key: string }> = [
@@ -150,7 +164,12 @@ export default function CubeScene({
           intensity={2.6}
         />
         <directionalLight position={[-5, 2, -3]} intensity={0.8} color="#8ec5ff" />
-        <CubeAnimator onFrame={onFrame} tickPlayerCube={cube === undefined} />
+        <CubeAnimator
+          onFrame={onFrame}
+          tickPlayerCube={cube === undefined}
+          readinessKey={readinessKey}
+          onSceneReady={onSceneReady}
+        />
         <CubeModel cube={cube} activeMove={activeMove} showVisuals={showVisuals} cubeStyle={cubeStyle} />
         <CameraManager
           compact={compact}
@@ -208,11 +227,24 @@ function CameraManager({
     const positions = compact ? FACE_CAMERA_POSITIONS_COMPACT : FACE_CAMERA_POSITIONS;
     const pos = positions[viewFaceTarget.face];
 
+    // Set correct camera "up" direction so the cube doesn't roll
+    // When looking at top (U=White): up points toward -Z (Blue face is at top of view)
+    // When looking at bottom (D=Yellow): up points toward +Z (Green face is at top of view)
+    // All side faces: standard Y-up
+    if (viewFaceTarget.face === "U") {
+      camera.up.set(0, 0, -1);
+    } else if (viewFaceTarget.face === "D") {
+      camera.up.set(0, 0, 1);
+    } else {
+      camera.up.set(0, 1, 0);
+    }
+
     camera.position.set(pos[0], pos[1], pos[2]);
     camera.lookAt(0, 0, 0);
 
     if (controlsRef.current) {
       controlsRef.current.target.set(0, 0, 0);
+      controlsRef.current.object.up.copy(camera.up);
       controlsRef.current.update();
     }
   }, [viewFaceTarget.version, viewFaceTarget.face, compact, camera]);
@@ -250,11 +282,16 @@ function CameraManager({
 function CubeAnimator({
   onFrame,
   tickPlayerCube,
+  readinessKey,
+  onSceneReady,
 }: {
   onFrame?: (deltaSeconds: number) => void;
   tickPlayerCube: boolean;
+  readinessKey: number;
+  onSceneReady?: (key: number) => void;
 }) {
   const tick = useCubeStore((state) => state.tick);
+  const reportedKeyRef = useRef<number | null>(null);
 
   useFrame((_, delta) => {
     const clampedDelta = Math.min(delta, 0.05);
@@ -264,6 +301,11 @@ function CubeAnimator({
     }
 
     onFrame?.(clampedDelta);
+
+    if (reportedKeyRef.current !== readinessKey) {
+      reportedKeyRef.current = readinessKey;
+      onSceneReady?.(readinessKey);
+    }
   });
 
   return null;
@@ -306,7 +348,7 @@ function CubeModel({
   const styleProps = CUBE_STYLE_PROPS[cubeStyle];
 
   return (
-    <group position={[0, 0.1, 0]} rotation={[-0.08, -0.18, 0.02]}>
+    <group position={[0, 0, 0]}>
       {renderCube.map((cubie) => {
         const moving = currentActiveMove ? isCubieInMove(cubie, currentActiveMove.move) : false;
         const visualPosition = moving

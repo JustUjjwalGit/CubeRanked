@@ -104,13 +104,13 @@ import PracticeScreen from "./features/practice/PracticeScreen";
 import OpponentPanel from "./components/OpponentPanel";
 import DeveloperOverlay from "./components/DeveloperOverlay";
 import CountdownOverlay from "./components/CountdownOverlay";
-import ReadyOverlay from "./components/ReadyOverlay";
 import InspectionOverlay from "./components/InspectionOverlay";
 import SolvedOverlay from "./components/SolvedOverlay";
 import CompactTimer from "./components/CompactTimer";
 import ResultsModal from "./components/ResultsModal";
 import PauseMenu from "./components/PauseMenu";
 import PracticeSettingsPopover from "./components/PracticeSettingsPopover";
+import PremiumCursor from "./components/PremiumCursor";
 import AppSettingsDialog from "./components/AppSettingsDialog";
 import ProfileDialog from "./features/profile/ProfileDialog";
 import KeyboardCheatSheet from "./components/KeyboardCheatSheet";
@@ -193,8 +193,8 @@ export default function App() {
   const [copyLabel, setCopyLabel] = useState("Copy Scramble");
   const [notice, setNotice] = useState<string | null>(null);
   const replayMovesRef = useRef<Array<{ move: string; timeOffsetMs: number }>>([]);
-  const countdownIntervalRef = useRef<number | null>(null);
-  const countdownTimeoutRef = useRef<number | null>(null);
+  const countdownFrameRef = useRef<number | null>(null);
+  const stabilizationFrameRef = useRef<number | null>(null);
   const noticeTimeoutRef = useRef<number | null>(null);
   const [lifetimeStats, setLifetimeStats] = useState(() => calculateLifetimeStats(getLocalReplays()));
 
@@ -214,7 +214,8 @@ export default function App() {
 
   const [lastSolve, setLastSolve] = useState<SolveRecord | null>(null);
   const [lastSolveIsPersonalBest, setLastSolveIsPersonalBest] = useState(false);
-  const [countdownValue, setCountdownValue] = useState("3");
+  const [countdownValue, setCountdownValue] = useState<string | null>(null);
+  const sceneReadyKeyRef = useRef(0);
   const [botOpponent, setBotOpponent] = useState<BotOpponent | null>(null);
   const [opponentCube, setOpponentCube] = useState<AnimatedCubeState | null>(null);
   const [raceResult, setRaceResult] = useState<RaceResult | null>(null);
@@ -242,6 +243,8 @@ export default function App() {
   const onlineStartAtRef = useRef<number | null>(null);
   const serverClockOffsetRef = useRef(0);
   const onlineFinishSentRef = useRef(false);
+  const pendingOnlineStartRef = useRef(false);
+  const countdownSoundPhaseRef = useRef<string | null>(null);
   const backendHealth = useBackendHealth();
   const socketSnapshot = useSocketConnection();
   const auth = useAuth();
@@ -374,9 +377,28 @@ export default function App() {
   const currentViewFace = useCubeStore((state) => state.currentViewFace);
   const setViewFace = useCubeStore((state) => state.setViewFace);
 
+  // Map the settings CameraFace color name to the cube Face letter used by Three.js
+  const CAMERA_FACE_TO_CUBE_FACE: Record<import("./utils/sessionStats").CameraFace, Face> = {
+    white: "U",
+    yellow: "D",
+    green: "F",
+    blue: "B",
+    red: "R",
+    orange: "L",
+  };
+  const defaultCubeFace: Face = CAMERA_FACE_TO_CUBE_FACE[settings.defaultCameraFace] ?? "F";
+
   const stage = gameState.stage;
   const overlay = gameState.overlay;
   const gameMode = gameState.mode;
+  const stageRef = useRef(stage);
+  const handleSceneReady = useCallback((key: number) => {
+    sceneReadyKeyRef.current = Math.max(sceneReadyKeyRef.current, key);
+  }, []);
+
+  useEffect(() => {
+    stageRef.current = stage;
+  }, [stage]);
 
   // Synchronize client activity with the socket presence server based on game stage
   useEffect(() => {
@@ -427,6 +449,11 @@ export default function App() {
       return merged;
     });
   }, []);
+
+  // Apply UI scale to document root
+  useEffect(() => {
+    document.documentElement.style.setProperty("--ui-scale", String(settings.uiScale));
+  }, [settings.uiScale]);
 
   const handleAuthError = useCallback((error: unknown) => {
     showNotice(error instanceof Error ? error.message : "Authentication failed", 2200);
@@ -991,6 +1018,15 @@ export default function App() {
     return () => window.clearTimeout(timeout);
   }, [gameMode, gameState.loadingId, resetOnlineSpectator, setCubeFromScramble, setupBotRace, stage]);
 
+  // Apply the defaultCameraFace setting whenever a solve session begins
+  useEffect(() => {
+    if (stage === "READY" || stage === "COUNTDOWN") {
+      setViewFace(defaultCubeFace);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, settings.defaultCameraFace]);
+
+
   useEffect(() => {
     if (gameMode !== "practice") {
       return;
@@ -1023,54 +1059,20 @@ export default function App() {
       }
     });
     const unsubscribeCountdown = socketManager.onMatchEvent("countdown", (payload) => {
-      if (countdownIntervalRef.current !== null) {
-        window.clearInterval(countdownIntervalRef.current);
-        countdownIntervalRef.current = null;
-      }
-      if (countdownTimeoutRef.current !== null) {
-        window.clearTimeout(countdownTimeoutRef.current);
-        countdownTimeoutRef.current = null;
-      }
-
       serverClockOffsetRef.current = Date.now() - payload.serverNow;
+      pendingOnlineStartRef.current = false;
       dispatch({ type: "START_COUNTDOWN" });
-      setCountdownValue("3");
-
-      let lastPlayedValue = "3";
-      const countdownEndAt = payload.countdownAt + payload.countdownMs;
-      const updateCountdown = () => {
-        const remainingMs = countdownEndAt - (Date.now() - serverClockOffsetRef.current);
-        let newVal: string;
-        if (remainingMs > 2_000) newVal = "3";
-        else if (remainingMs > 1_000) newVal = "2";
-        else if (remainingMs > 0) newVal = "1";
-        else newVal = "GO";
-
-        if (newVal !== lastPlayedValue) {
-          lastPlayedValue = newVal;
-          setCountdownValue(newVal);
-          if (newVal === "GO") audioManager.playGo();
-        }
-      };
-
-      updateCountdown();
-      const interval = window.setInterval(updateCountdown, 100);
-      countdownIntervalRef.current = interval;
-
-      const timeout = window.setTimeout(() => {
-        window.clearInterval(interval);
-        if (countdownIntervalRef.current === interval) {
-          countdownIntervalRef.current = null;
-        }
-      }, payload.countdownMs + 700);
-      countdownTimeoutRef.current = timeout;
     });
     const unsubscribeStart = socketManager.onMatchEvent("start", (payload) => {
       serverClockOffsetRef.current = Date.now() - payload.serverNow;
       onlineStartAtRef.current = payload.startAt;
       onlineFinishSentRef.current = false;
       setElapsedMs(0);
-      dispatch({ type: "COUNTDOWN_COMPLETE" });
+      if (stageRef.current === "COUNTDOWN") {
+        pendingOnlineStartRef.current = true;
+      } else {
+        dispatch({ type: "COUNTDOWN_COMPLETE" });
+      }
     });
     const unsubscribeOpponentMove = socketManager.onMatchEvent("opponentMove", (payload) => {
       try {
@@ -1197,12 +1199,6 @@ export default function App() {
     });
 
     return () => {
-      if (countdownIntervalRef.current !== null) {
-        window.clearInterval(countdownIntervalRef.current);
-      }
-      if (countdownTimeoutRef.current !== null) {
-        window.clearTimeout(countdownTimeoutRef.current);
-      }
       unsubscribeQueue();
       unsubscribeFound();
       unsubscribeResume();
@@ -1311,17 +1307,19 @@ export default function App() {
   }, [gameMode]);
 
   useEffect(() => {
-    if (stage !== "COUNTDOWN" || gameMode === "ranked" || gameMode === "private" || overlay !== "NONE") {
+    if (stage !== "COUNTDOWN" || overlay !== "NONE") {
+      setCountdownValue(null);
       return;
     }
 
-    setCountdownValue("3");
+    setCountdownValue(null);
     setElapsedMs(0);
     setSolveMoveCount(0);
     setPenalty("none");
     solveStartRef.current = 0;
     botMoveIndexRef.current = 0;
     raceFinishedRef.current = false;
+    countdownSoundPhaseRef.current = null;
     setBotOpponent((current) => current ? {
       ...current,
       status: "inspection",
@@ -1330,34 +1328,140 @@ export default function App() {
       moveCount: 0,
     } : current);
 
-    const timeouts = [
-      window.setTimeout(() => { setCountdownValue("2"); }, 600),
-      window.setTimeout(() => { setCountdownValue("1"); }, 1_200),
-      window.setTimeout(() => { setCountdownValue("GO"); audioManager.playGo(); }, 1_600),
-      window.setTimeout(() => {
-        const now = performance.now();
-        solveStartRef.current = now;
-        setElapsedMs(0);
-        setBotOpponent((current) => current ? { ...current, status: "solving" } : current);
-        dispatch({ type: "COUNTDOWN_COMPLETE" });
-      }, 2_000),
+    let cancelled = false;
+    let stableFrames = 0;
+    let previousStabilityTime = 0;
+    let visibleCountdownStarted = false;
+    const stabilityStartedAt = performance.now();
+    const phases = [
+      { value: "3", duration: 780 },
+      { value: "2", duration: 780 },
+      { value: "1", duration: 780 },
+      { value: "GO", duration: 520 },
     ];
 
-    return () => {
-      timeouts.forEach((timeout) => window.clearTimeout(timeout));
+    const cancelFrames = () => {
+      if (stabilizationFrameRef.current !== null) {
+        cancelAnimationFrame(stabilizationFrameRef.current);
+        stabilizationFrameRef.current = null;
+      }
+      if (countdownFrameRef.current !== null) {
+        cancelAnimationFrame(countdownFrameRef.current);
+        countdownFrameRef.current = null;
+      }
     };
-  }, [gameMode, overlay, stage]);
+
+    const playPhaseSound = (value: string) => {
+      if (countdownSoundPhaseRef.current === value) return;
+      countdownSoundPhaseRef.current = value;
+      if (value === "GO") {
+        audioManager.playGo();
+      } else {
+        audioManager.playCountdownBeep(value === "1");
+      }
+    };
+
+    const completeCountdown = () => {
+      if (cancelled) return;
+      const now = performance.now();
+      if (gameMode === "bot-race") {
+        solveStartRef.current = now;
+        replayMovesRef.current = [];
+        setElapsedMs(0);
+        setBotOpponent((current) => current ? { ...current, status: "solving" } : current);
+      }
+      pendingOnlineStartRef.current = false;
+      dispatch({ type: "COUNTDOWN_COMPLETE" });
+    };
+
+    const runVisibleCountdown = () => {
+      if (visibleCountdownStarted || cancelled) return;
+      visibleCountdownStarted = true;
+      let phaseIndex = 0;
+      let phaseElapsed = 0;
+      let previousTimestamp = 0;
+      let paintedCurrentPhase = false;
+      let largeDeltaFrames = 0;
+
+      const step = (timestamp: number) => {
+        if (cancelled) return;
+
+        const currentPhase = phases[phaseIndex];
+        if (!paintedCurrentPhase) {
+          setCountdownValue(currentPhase.value);
+          playPhaseSound(currentPhase.value);
+          paintedCurrentPhase = true;
+          previousTimestamp = timestamp;
+          countdownFrameRef.current = requestAnimationFrame(step);
+          return;
+        }
+
+        const rawDelta = timestamp - previousTimestamp;
+        previousTimestamp = timestamp;
+        if (rawDelta > 180) {
+          largeDeltaFrames += 1;
+        } else {
+          largeDeltaFrames = 0;
+        }
+        const safeDelta = rawDelta > 180
+          ? (largeDeltaFrames >= 3 ? 120 : 40)
+          : Math.min(Math.max(rawDelta, 0), 80);
+        phaseElapsed += safeDelta;
+
+        if (phaseElapsed >= currentPhase.duration) {
+          phaseIndex += 1;
+          phaseElapsed = 0;
+          paintedCurrentPhase = false;
+          if (phaseIndex >= phases.length) {
+            setCountdownValue(null);
+            completeCountdown();
+            return;
+          }
+        }
+
+        countdownFrameRef.current = requestAnimationFrame(step);
+      };
+
+      countdownFrameRef.current = requestAnimationFrame(step);
+    };
+
+    const waitForStableScene = (timestamp: number) => {
+      if (cancelled) return;
+      const rawDelta = previousStabilityTime > 0 ? timestamp - previousStabilityTime : 16;
+      previousStabilityTime = timestamp;
+      const sceneReady = sceneReadyKeyRef.current >= gameState.loadingId;
+      const frameOk = rawDelta > 0 && rawDelta <= 42;
+      stableFrames = sceneReady && frameOk ? stableFrames + 1 : 0;
+      const maxWaitExceeded = performance.now() - stabilityStartedAt > 3_200;
+
+      if ((sceneReady && stableFrames >= 6) || maxWaitExceeded) {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            if (!cancelled) runVisibleCountdown();
+          });
+        });
+        return;
+      }
+
+      stabilizationFrameRef.current = requestAnimationFrame(waitForStableScene);
+    };
+
+    const maxWaitTimer = window.setTimeout(() => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(runVisibleCountdown);
+      });
+    }, 3_400);
+    stabilizationFrameRef.current = requestAnimationFrame(waitForStableScene);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(maxWaitTimer);
+      cancelFrames();
+    };
+  }, [gameMode, gameState.loadingId, overlay, stage]);
 
   useEffect(() => {
     if (overlay !== "NONE") return;
-
-    console.log({
-      stage,
-      cubeLocked: activeMove !== null,
-      inputBlocked: overlay !== "NONE" || stage === "MODE_SELECT" || stage === "MATCH_LOADING" || stage === "RESULT",
-      solveStarted: solveStartRef.current > 0,
-      inspectionTime: inspectionElapsedMs,
-    });
 
     if (stage === "READY" && isBotRace) {
       solveStartRef.current = performance.now();
@@ -1419,13 +1523,6 @@ export default function App() {
         const inspectionMs = now - inspectionStartRef.current;
         setInspectionElapsedMs(inspectionMs);
         setPenalty(inspectionMs > 17_000 ? "DNF" : inspectionMs > 15_000 ? "+2" : "none");
-        console.log({
-          stage,
-          cubeLocked: activeMove !== null,
-          inputBlocked: overlay !== "NONE",
-          solveStarted: solveStartRef.current > 0,
-          inspectionTime: inspectionElapsedMs,
-        });
         if (inspectionMs >= 15_000 && solveStartRef.current === 0) {
           solveStartRef.current = performance.now();
           replayMovesRef.current = [];
@@ -1612,6 +1709,9 @@ export default function App() {
   ]);
 
   return (
+    <>
+      <PremiumCursor reducedMotion={settings.reducedMotion} minimal={isPracticeStage(stage) && overlay === "NONE"} />
+      <div id="app-scale-root">
     <main className="client-shell">
       {/* First-run identity chooser screen */}
       <AnimatePresence mode="wait">
@@ -1694,7 +1794,8 @@ export default function App() {
               onOpponentFrame={gameMode === "bot-race" ? tickOpponentCube : tickOnlineOpponentCube}
               onHome={returnHome}
               onSettings={() => dispatch({ type: "OPEN_PRACTICE_SETTINGS" })}
-              effectiveInspectionEnabled={effectiveInspectionEnabled}
+              sceneReadyKey={gameState.loadingId}
+              onSceneReady={handleSceneReady}
             />
           )}
         </AnimatePresence>
@@ -1940,6 +2041,8 @@ export default function App() {
           </div>
         </div>
       )}
-    </main>
+      </main>
+      </div>
+    </>
   );
 }
